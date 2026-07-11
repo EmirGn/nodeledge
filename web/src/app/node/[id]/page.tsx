@@ -5,6 +5,9 @@ import { renderMarkdown } from "@/lib/markdown";
 
 const TOPIC = "quantum-mechanics";
 
+// Baked at build time: topics/ is outside web/ and absent at serverless runtime.
+export const dynamicParams = false;
+
 export function generateStaticParams() {
   return loadManifest(TOPIC).nodes.map((n) => ({ id: n.id }));
 }
