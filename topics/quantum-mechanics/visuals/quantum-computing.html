@@ -1,0 +1,76 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#7c3aed;--win:#16a34a;--arrow:#0891b2;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#a78bfa;--win:#4ade80;--arrow:#22d3ee;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+label{font-size:12.5px;color:var(--muted);min-width:130px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+button.mini{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:6px 10px;cursor:pointer;font:12px system-ui}
+.small{font-size:11.5px;color:var(--muted);margin-top:6px}
+</style>
+<div class="wrap">
+  <div><h1>Quantum Computing — Interference Selects the Answer</h1>
+  <div class="cap">Each of the 4 possible answers is built from amplitude arrows that can add OR cancel. Tune the phase: for one answer the arrows line up (amplitude piles up); for the others they point every way and cancel to near zero. That's the quantum trick.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="p">Phase φ (the hidden value)</label><input id="p" type="range" min="0" max="1" step="0.001" value="0.13"><span class="small" id="pv" style="margin:0"></span>
+      <button class="mini" id="snap">tune to a clean answer</button></div>
+    <div class="small" id="msg"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const P=document.getElementById('p'),PV=document.getElementById('pv'),MSG=document.getElementById('msg'),SNAP=document.getElementById('snap');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null;
+const N=4,labels=['00','01','10','11'];
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function amp(k,phi){let re=0,im=0;for(let x=0;x<N;x++){const ang=2*Math.PI*x*(phi-k/N);re+=Math.cos(ang);im+=Math.sin(ang);}return {re:re/N,im:im/N};}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const phi=+P.value;
+  const cols=W<480?2:4,rows=Math.ceil(N/cols);
+  const cw=W/cols,ch=H/rows;
+  let probs=[],best=0,bestP=0;
+  for(let k=0;k<N;k++){const a=amp(k,phi);const pr=a.re*a.re+a.im*a.im;probs.push(pr);if(pr>bestP){bestP=pr;best=k;}}
+  for(let k=0;k<N;k++){
+    const col=k%cols,row=(k/cols)|0;
+    const x0=col*cw,y0=row*ch;
+    const cx=x0+cw*0.5,cy=y0+ch*0.42,R=Math.min(cw,ch)*0.26;
+    const isWin=probs[k]>0.6;
+    // clock circle
+    ctx.strokeStyle=css('--grid');ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
+    // tip-to-tail phasors
+    let px=cx,py=cy;ctx.strokeStyle=css('--arrow');ctx.lineWidth=1.6;
+    for(let xq=0;xq<N;xq++){const ang=2*Math.PI*xq*(phi-k/N);const dx=Math.cos(ang)*R/2,dy=Math.sin(ang)*R/2;
+      ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+dx,py+dy);ctx.stroke();px+=dx;py+=dy;}
+    // resultant
+    ctx.strokeStyle=isWin?css('--win'):css('--accent');ctx.lineWidth=2.6;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(px,py);ctx.stroke();
+    ctx.fillStyle=isWin?css('--win'):css('--accent');ctx.beginPath();ctx.arc(px,py,3,0,7);ctx.fill();
+    // bar + label
+    const bw=cw*0.5,bx=cx-bw/2,by=y0+ch*0.78,bh=ch*0.10;
+    ctx.fillStyle=css('--grid');ctx.fillRect(bx,by,bw,bh);
+    ctx.fillStyle=isWin?css('--win'):css('--accent');ctx.fillRect(bx,by,bw*probs[k],bh);
+    ctx.fillStyle=css('--fg');ctx.font='600 12px system-ui';ctx.textAlign='center';
+    ctx.fillText('|'+labels[k]+'⟩  '+(probs[k]*100).toFixed(0)+'%',cx,by-4);
+    ctx.fillStyle=css('--muted');ctx.font='10px system-ui';
+    ctx.fillText(isWin?'arrows aligned → builds up':'arrows cancel',cx,by+bh+14);
+  }
+  PV.textContent='φ = '+phi.toFixed(3);
+  MSG.innerHTML=bestP>0.6?('Answer <b>|'+labels[best]+'⟩</b> reinforces to '+(bestP*100).toFixed(0)+'% while the rest cancel — read it out and you almost certainly get the right answer.'):'No answer dominates yet — amplitudes are spread. Nudge φ until one set of arrows lines up.';
+}
+SNAP.onclick=()=>{const k=Math.round((+P.value)*N)%N;P.value=(k/N).toFixed(3);draw();};
+P.addEventListener('input',draw);
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)draw();});
+fit();draw();
+</script>

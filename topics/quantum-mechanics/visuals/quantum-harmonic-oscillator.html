@@ -1,0 +1,86 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#7c3aed;--psi:#2563eb;--pot:#94a3b8;--zp:#ea580c;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#a78bfa;--psi:#60a5fa;--pot:#64748b;--zp:#fb923c;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:120px;text-align:right}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--muted);padding:7px 10px;font:600 12px system-ui;cursor:pointer}
+.seg button.act{background:var(--psi);color:#fff}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>Quantum Harmonic Oscillator</h1>
+  <div class="cap">A mass-on-a-spring in the quantum world. Its energy comes in perfectly even rungs Eₙ=(n+½)hf. Change the frequency to stretch the ladder — but the spacing always stays uniform, and the bottom rung sits at ½hf, never zero.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><span class="small">Level:</span>
+      <span class="seg" id="ns"><button data-n="0" class="act">n=0</button><button data-n="1">n=1</button><button data-n="2">n=2</button><button data-n="3">n=3</button><button data-n="4">n=4</button></span></div>
+    <div class="row"><label for="f">Frequency f</label><input id="f" type="range" min="0.6" max="1.8" step="0.02" value="1"><span class="val" id="fv"></span></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const NS=document.getElementById('ns'),F=document.getElementById('f'),FV=document.getElementById('fv');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0,n=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function hermite(nn,x){let h0=1,h1=2*x;if(nn===0)return h0;if(nn===1)return h1;for(let i=1;i<nn;i++){const h2=2*x*h1-2*i*h0;h0=h1;h1=h2;}return h1;}
+function psiN(nn,x){return hermite(nn,x)*Math.exp(-x*x/2);}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const f=+F.value;const hf=f; // spacing = h f (units h=1)
+  const cx=W/2, baseY=H*0.94, topY=H*0.08;
+  const xr=3.4; // x range in natural units
+  const pxPerU=(W*0.42)/xr;
+  const Emax=(4+0.5)*1.8+0.6; // fixed axis for stable layout
+  const eScale=(baseY-topY)/Emax;
+  const Ey=e=>baseY-e*eScale;
+  // potential parabola V=1/2 (f x)^2 -> scaled; use V= 0.5*f*f*x^2 so turning at E
+  // grid baseline
+  // parabola
+  ctx.strokeStyle=css('--pot');ctx.lineWidth=2;ctx.beginPath();
+  for(let px=-xr;px<=xr;px+=0.05){const V=0.5*f*f*px*px;const x=cx+px*pxPerU;const y=Ey(V);if(px===-xr)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  // energy levels
+  for(let k=0;k<=4;k++){const e=(k+0.5)*hf;const y=Ey(e);
+    // turning points: 0.5 f^2 x^2 = e -> x=sqrt(2e)/f
+    const xt=Math.sqrt(2*e)/f;const x1=cx-xt*pxPerU,x2=cx+xt*pxPerU;
+    const on=k===n;
+    ctx.strokeStyle=on?css('--psi'):css('--line');ctx.lineWidth=on?2.5:1.4;
+    ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+    ctx.fillStyle=on?css('--psi'):css('--muted');ctx.font=(on?'600 ':'')+'11px system-ui';ctx.textAlign='right';
+    ctx.fillText('E'+k+'='+((k+0.5)*hf).toFixed(2),x1-6,y+4);
+    if(k===0){ctx.fillStyle=css('--zp');ctx.textAlign='left';ctx.fillText('½hf zero-point (never 0)',x2+6,y+4);}
+  }
+  // selected wavefunction riding on its level
+  const e=(n+0.5)*hf;const y0=Ey(e);
+  // normalize psi over range
+  let mx=0;for(let px=-xr;px<=xr;px+=0.05){mx=Math.max(mx,Math.abs(psiN(n,px)));}
+  const wamp=Math.min(hf*eScale*0.5,H*0.11)/mx;
+  const timef=Math.cos(t*(n+0.5)*f*0.6);
+  ctx.strokeStyle=css('--accent');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let px=-xr;px<=xr;px+=0.03){const val=psiN(n,px)*wamp*timef;const x=cx+px*pxPerU;const y=y0-val;if(px===-xr)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';
+  ctx.fillText('wavefunction ψ'+n+' (rungs are evenly spaced by hf)',cx,H*0.06);
+  FV.textContent='f = '+f.toFixed(2)+'   spacing hf = '+hf.toFixed(2);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt;draw();raf=requestAnimationFrame(loop);}
+NS.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;n=+b.dataset.n;[...NS.children].forEach(c=>c.classList.toggle('act',c===b));});
+F.addEventListener('input',draw);
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

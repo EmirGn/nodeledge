@@ -1,0 +1,93 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--pos:#2563eb;--mom:#db2777;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--pos:#60a5fa;--mom:#f472b6;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+label{font-size:12.5px;color:var(--muted);min-width:120px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--pos)}
+.read{margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums;display:flex;gap:16px;flex-wrap:wrap}
+.read b{font-weight:600}
+.dx{color:var(--pos)}.dp{color:var(--mom)}
+.prod{padding:2px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line)}
+</style>
+<div class="wrap">
+  <div><h1>Heisenberg Uncertainty Principle</h1>
+  <div class="cap">Squeeze the position spread (make the packet narrow and well-located) and watch the momentum spread blow up to compensate. Their product can never drop below ħ/2.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="dx">Position spread Δx</label><input id="dx" type="range" min="12" max="120" step="1" value="60"><span></span></div>
+    <div class="read">
+      <span class="dx">Δx = <b id="vdx"></b></span>
+      <span class="dp">Δp = <b id="vdp"></b></span>
+      <span class="prod">Δx·Δp = <b id="vpr"></b> &nbsp;≥&nbsp; ħ/2</span>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const DX=document.getElementById('dx'),VDX=document.getElementById('vdx'),VDP=document.getElementById('vdp'),VPR=document.getElementById('vpr');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0;
+const HBAR=1;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function panel(x0,y0,w,h,title,col){
+  ctx.strokeStyle=css('--grid');ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x0,y0+h/2);ctx.lineTo(x0+w,y0+h/2);ctx.stroke();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='left';ctx.fillText(title,x0+6,y0+14);
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const gap=10;const ph=(H-gap)/2;
+  const dxPix=+DX.value; // controls real-space width in px
+  // sigma_x in "units" proportional to dxPix; sigma_p = hbar/(2 sigma_x)
+  const sx=dxPix/40; // arbitrary unit
+  const sp=HBAR/(2*sx);
+  // ----- POSITION packet (top) -----
+  const y0=0;panel(0,y0,W,ph,'Position ψ(x)  — where the particle is',css('--pos'));
+  const cx=W/2, mid=y0+ph/2, amp=ph*0.36;
+  const k0=0.09; // carrier
+  ctx.strokeStyle=css('--pos');ctx.lineWidth=2;ctx.beginPath();
+  for(let px=0;px<=W;px+=2){
+    const x=px-cx;const env=Math.exp(-x*x/(2*dxPix*dxPix));
+    const val=env*Math.cos(k0*x - t);
+    const y=mid - val*amp;
+    if(px===0)ctx.moveTo(px,y);else ctx.lineTo(px,y);
+  }
+  ctx.stroke();
+  // envelope
+  ctx.strokeStyle=css('--pos')+'66';ctx.setLineDash([4,4]);ctx.beginPath();
+  for(let px=0;px<=W;px+=2){const x=px-cx;const env=Math.exp(-x*x/(2*dxPix*dxPix));ctx.lineTo(px,mid-env*amp);}
+  ctx.stroke();ctx.setLineDash([]);
+  // width bracket
+  drawBracket(cx-dxPix,cx+dxPix,y0+ph-10,css('--pos'),'Δx');
+  // ----- MOMENTUM distribution (bottom) -----
+  const y1=ph+gap;panel(0,y1,W,ph,'Momentum |φ(p)|²  — how fast it might be moving',css('--mom'));
+  const mid2=y1+ph/2,cx2=W/2;
+  // sigma_p in px: inverse relationship. Choose ppix = k/ sx  so narrow x -> wide p
+  const ppix=Math.max(6,Math.min(W*0.48, 900/dxPix* (W/500)));
+  ctx.fillStyle=css('--mom')+'33';ctx.strokeStyle=css('--mom');ctx.lineWidth=2;ctx.beginPath();
+  ctx.moveTo(0,y1+ph);
+  for(let px=0;px<=W;px+=2){const x=px-cx2;const g=Math.exp(-x*x/(2*ppix*ppix));const y=(y1+ph) - g*(ph*0.8);if(px===0)ctx.moveTo(px,y);else ctx.lineTo(px,y);}
+  ctx.lineTo(W,y1+ph);ctx.closePath();ctx.fill();
+  ctx.beginPath();for(let px=0;px<=W;px+=2){const x=px-cx2;const g=Math.exp(-x*x/(2*ppix*ppix));const y=(y1+ph)-g*(ph*0.8);if(px===0)ctx.moveTo(px,y);else ctx.lineTo(px,y);}ctx.stroke();
+  drawBracket(cx2-ppix,cx2+ppix,y1+ph-6,css('--mom'),'Δp');
+  VDX.textContent=sx.toFixed(2);VDP.textContent=sp.toFixed(2);VPR.textContent=(sx*sp).toFixed(2);
+}
+function drawBracket(x1,x2,y,col,lbl){
+  ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.beginPath();
+  ctx.moveTo(x1,y-5);ctx.lineTo(x1,y);ctx.lineTo(x2,y);ctx.lineTo(x2,y-5);ctx.stroke();
+  ctx.fillStyle=col;ctx.font='600 11px system-ui';ctx.textAlign='center';ctx.fillText(lbl,(x1+x2)/2,y-8);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt*3;draw();raf=requestAnimationFrame(loop);}
+DX.addEventListener('input',draw);
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

@@ -1,0 +1,85 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#6d28d9;--good:#16a34a;--bad:#dc2626;--line:#d7dce3;--wall:#c3cad4;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#a78bfa;--good:#4ade80;--bad:#f87171;--line:#2a313b;--wall:#3a434f;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:130px;accent-color:var(--accent)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:150px;text-align:right}
+button.mini{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:6px 10px;cursor:pointer;font:12px system-ui}
+.small{font-size:11.5px;color:var(--muted);margin-top:6px}
+.hit{color:var(--good);font-weight:600}.miss{color:var(--bad);font-weight:600}
+</style>
+<div class="wrap">
+  <div><h1>The Schrödinger Equation — Ĥψ = Eψ</h1>
+  <div class="cap">Only special wavefunctions solve the equation. Sweep the trial energy E: for most values the wave misses the far wall (it's not a solution). Hit an allowed energy and it pins to zero — a stationary state snaps into place.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="e">Trial energy E</label><input id="e" type="range" min="0.20" max="26" step="0.02" value="2.3"><span class="val" id="ev"></span>
+      <button class="mini" id="snap">snap to nearest solution</button></div>
+    <div class="small" id="msg"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const E=document.getElementById('e'),EV=document.getElementById('ev'),MSG=document.getElementById('msg'),SNAP=document.getElementById('snap');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function residual(e){return Math.sin(Math.PI*Math.sqrt(e));}
+function isEigen(e){return Math.abs(residual(e))<0.04;}
+function nearestN(e){return Math.max(1,Math.round(Math.sqrt(e)));}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const e=+E.value;const root=Math.sqrt(e);
+  const ladderW=Math.min(120,W*0.24);
+  const bx0=14,bx1=W-ladderW-20,mid=H*0.52,amp=H*0.30;
+  const eig=isEigen(e);const col=eig?css('--good'):css('--bad');
+  // box walls
+  ctx.fillStyle=css('--wall');ctx.fillRect(bx0-8,H*0.12,8,H*0.8);ctx.fillRect(bx1,H*0.12,8,H*0.8);
+  ctx.strokeStyle=css('--grid');ctx.beginPath();ctx.moveTo(bx0,mid);ctx.lineTo(bx1,mid);ctx.stroke();
+  // wave: sin(pi*root*(x/L)) * cos(E t) time factor
+  const timef=Math.cos(t*e*0.15);
+  ctx.strokeStyle=col;ctx.lineWidth=2.6;ctx.beginPath();
+  let endY=mid;
+  for(let px=bx0;px<=bx1;px++){const u=(px-bx0)/(bx1-bx0);const val=Math.sin(Math.PI*root*u)*timef;const y=mid-val*amp;if(px===bx0)ctx.moveTo(px,y);else ctx.lineTo(px,y);if(px===bx1)endY=mid-Math.sin(Math.PI*root)*amp;}
+  ctx.stroke();
+  // pinned start
+  ctx.fillStyle=css('--accent');ctx.beginPath();ctx.arc(bx0,mid,4,0,7);ctx.fill();
+  // far wall residual marker
+  ctx.fillStyle=col;ctx.beginPath();ctx.arc(bx1,endY,5,0,7);ctx.fill();
+  ctx.strokeStyle=col;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(bx1,mid);ctx.lineTo(bx1,endY);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';
+  ctx.fillText('pinned = 0',bx0,H*0.12-4);
+  ctx.fillText(eig?'pins to 0 ✓':'misses wall',bx1,H*0.12-4);
+  // energy ladder
+  const lx=W-ladderW-6;
+  ctx.textAlign='left';ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.fillText('allowed E',lx,H*0.12-4);
+  const top=H*0.16,bot=H*0.9,Emax=27;
+  for(let nn=1;nn<=5;nn++){const en=nn*nn;const y=bot-(en/Emax)*(bot-top);
+    const on=Math.abs(e-en)<0.5;
+    ctx.strokeStyle=on?css('--good'):css('--line');ctx.lineWidth=on?3:1.5;
+    ctx.beginPath();ctx.moveTo(lx,y);ctx.lineTo(lx+ladderW-14,y);ctx.stroke();
+    ctx.fillStyle=on?css('--good'):css('--muted');ctx.font=(on?'600 ':'')+'11px system-ui';
+    ctx.fillText('n='+nn+' (E='+en+')',lx,y-4);}
+  // current E marker
+  const y=bot-(Math.min(e,Emax)/Emax)*(bot-top);
+  ctx.fillStyle=css('--accent');ctx.beginPath();ctx.moveTo(lx-6,y);ctx.lineTo(lx-1,y-4);ctx.lineTo(lx-1,y+4);ctx.closePath();ctx.fill();
+  EV.textContent='E = '+e.toFixed(2)+'  (√E = '+root.toFixed(2)+')';
+  MSG.innerHTML=eig?('<span class="hit">✓ Solution! √E = '+nearestN(e)+' — a stationary state, energy E'+nearestN(e)+' = '+(nearestN(e)**2)+'</span>'):('<span class="miss">✗ Not a solution</span> — √E = '+root.toFixed(2)+' isn\'t a whole number, so the wave can\'t vanish at both walls.');
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt;draw();raf=requestAnimationFrame(loop);}
+SNAP.onclick=()=>{const nn=nearestN(+E.value);E.value=(nn*nn).toFixed(2);draw();};
+E.addEventListener('input',draw);
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

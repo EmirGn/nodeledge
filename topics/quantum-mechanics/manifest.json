@@ -1,0 +1,273 @@
+{
+  "format": "nodeledge-package",
+  "formatVersion": "1.0",
+  "topic": {
+    "slug": "quantum-mechanics",
+    "title": "Quantum Mechanics",
+    "description": "From the first cracks in classical physics to entanglement and quantum computing — 15 connected concepts in learning order.",
+    "language": "en",
+    "version": "0.1.0"
+  },
+  "nodes": [
+    {
+      "id": "blackbody-radiation",
+      "title": "Blackbody Radiation & the Ultraviolet Catastrophe",
+      "summary": "Hot objects glow, and the exact color they glow follows a precise curve that classical physics got catastrophically wrong. Fixing it forced Max Planck to assume energy comes in discrete lumps — the first crack in classical physics and the birth of the quantum.",
+      "level": 1
+    },
+    {
+      "id": "photoelectric-effect",
+      "title": "Photoelectric Effect",
+      "summary": "Shine light on a metal and it can knock electrons loose — but only if the light's color (frequency) is high enough, no matter how bright it is. Einstein explained this by saying light itself arrives in energy packets called photons, cementing the quantum idea.",
+      "level": 1
+    },
+    {
+      "id": "wave-particle-duality",
+      "title": "Wave-Particle Duality",
+      "summary": "Light and matter are neither purely waves nor purely particles — they show wave behavior (spreading, interference) or particle behavior (discrete hits) depending on how you look. This isn't confusion; it's a deeper reality that quantum mechanics makes precise.",
+      "level": 2
+    },
+    {
+      "id": "de-broglie-waves",
+      "title": "de Broglie Waves",
+      "summary": "If light waves can act like particles, de Broglie asked, why can't particles like electrons act like waves? Every piece of matter has a wavelength set by its momentum — tiny for baseballs, but big enough for electrons to visibly ripple and interfere.",
+      "level": 2
+    },
+    {
+      "id": "double-slit-experiment",
+      "title": "The Double-Slit Experiment",
+      "summary": "Fire particles one at a time at a screen with two slits and they build up a wave interference pattern — as if each particle went through both slits and interfered with itself. Peek to see which slit it used, and the pattern vanishes. This is the heart of quantum weirdness.",
+      "level": 2
+    },
+    {
+      "id": "heisenberg-uncertainty-principle",
+      "title": "Heisenberg Uncertainty Principle",
+      "summary": "You cannot know both a particle's exact position and exact momentum at once — not because your instruments are crude, but because a sharply located wave has no single wavelength. Pin down one and the other necessarily blurs. It's a built-in feature of reality.",
+      "level": 3
+    },
+    {
+      "id": "the-wavefunction",
+      "title": "The Wavefunction & the Born Rule",
+      "summary": "A quantum object is described by a wavefunction — a spread-out mathematical wave that encodes everything knowable about it. The wave itself isn't directly observable; its squared height gives the probability of finding the particle at each location. That link is the Born rule.",
+      "level": 3
+    },
+    {
+      "id": "schrodinger-equation",
+      "title": "The Schrödinger Equation",
+      "summary": "This is quantum mechanics' equivalent of Newton's laws — the master equation that tells you how a wavefunction evolves and changes shape over time. Solve it for a given situation and you get the allowed energies and behaviors of the system.",
+      "level": 3
+    },
+    {
+      "id": "particle-in-a-box",
+      "title": "Particle in a Box",
+      "summary": "The simplest solvable quantum system: a particle trapped between two walls. It can only occupy specific standing-wave states with quantized energies, and it can never sit perfectly still. A clean sandbox for seeing where energy levels come from.",
+      "level": 4
+    },
+    {
+      "id": "quantum-tunneling",
+      "title": "Quantum Tunneling",
+      "summary": "A quantum particle can pass through a barrier it doesn't have enough energy to climb over — its wavefunction leaks through the wall and sometimes emerges on the far side. It powers the Sun, modern electronics, and radioactive decay.",
+      "level": 4
+    },
+    {
+      "id": "quantum-harmonic-oscillator",
+      "title": "Quantum Harmonic Oscillator",
+      "summary": "The quantum version of a mass on a spring. Its energy comes in perfectly even rungs, and even its lowest state still jiggles with zero-point energy. Nearly every vibrating quantum system — molecules, sound in crystals, light itself — is built from this one model.",
+      "level": 4
+    },
+    {
+      "id": "spin",
+      "title": "Quantum Spin",
+      "summary": "Particles carry an intrinsic angular momentum called spin — a magnetic, compass-like property that is fundamentally quantized. It isn't literal spinning; measure it along any axis and you get only two answers, \"up\" or \"down,\" never anything in between.",
+      "level": 4
+    },
+    {
+      "id": "superposition-and-measurement",
+      "title": "Superposition & Measurement",
+      "summary": "A quantum system can exist in a blend of multiple possibilities at once — a superposition. Measuring it forces a single definite outcome, with probabilities set by the wavefunction. \"Measurement\" means any interaction that records the result, not a conscious observer.",
+      "level": 5
+    },
+    {
+      "id": "entanglement",
+      "title": "Quantum Entanglement",
+      "summary": "Two particles can share a single joint quantum state, so their properties stay perfectly correlated no matter how far apart they travel. Measuring one instantly determines the other — yet no usable information travels faster than light. Einstein called it \"spooky action at a distance.\"",
+      "level": 5
+    },
+    {
+      "id": "quantum-computing",
+      "title": "Introduction to Quantum Computing",
+      "summary": "Quantum computers store information in qubits that can be in superpositions and entangled with each other. By orchestrating interference among many possibilities at once, they can solve certain problems dramatically faster than any ordinary computer.",
+      "level": 5
+    }
+  ],
+  "edges": [
+    {
+      "source": "blackbody-radiation",
+      "target": "photoelectric-effect",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "photoelectric-effect",
+      "target": "wave-particle-duality",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "wave-particle-duality",
+      "target": "de-broglie-waves",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "wave-particle-duality",
+      "target": "double-slit-experiment",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "de-broglie-waves",
+      "target": "heisenberg-uncertainty-principle",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "de-broglie-waves",
+      "target": "the-wavefunction",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "double-slit-experiment",
+      "target": "the-wavefunction",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "the-wavefunction",
+      "target": "schrodinger-equation",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "schrodinger-equation",
+      "target": "particle-in-a-box",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "schrodinger-equation",
+      "target": "quantum-tunneling",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "schrodinger-equation",
+      "target": "quantum-harmonic-oscillator",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "the-wavefunction",
+      "target": "spin",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "the-wavefunction",
+      "target": "superposition-and-measurement",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "superposition-and-measurement",
+      "target": "entanglement",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "spin",
+      "target": "entanglement",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "superposition-and-measurement",
+      "target": "quantum-computing",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "entanglement",
+      "target": "quantum-computing",
+      "type": "prerequisite",
+      "weight": 1.0
+    },
+    {
+      "source": "blackbody-radiation",
+      "target": "wave-particle-duality",
+      "type": "related",
+      "weight": 0.6
+    },
+    {
+      "source": "photoelectric-effect",
+      "target": "double-slit-experiment",
+      "type": "related",
+      "weight": 0.6
+    },
+    {
+      "source": "de-broglie-waves",
+      "target": "double-slit-experiment",
+      "type": "related",
+      "weight": 0.8
+    },
+    {
+      "source": "de-broglie-waves",
+      "target": "schrodinger-equation",
+      "type": "related",
+      "weight": 0.7
+    },
+    {
+      "source": "heisenberg-uncertainty-principle",
+      "target": "the-wavefunction",
+      "type": "related",
+      "weight": 0.7
+    },
+    {
+      "source": "heisenberg-uncertainty-principle",
+      "target": "double-slit-experiment",
+      "type": "related",
+      "weight": 0.6
+    },
+    {
+      "source": "double-slit-experiment",
+      "target": "superposition-and-measurement",
+      "type": "related",
+      "weight": 0.85
+    },
+    {
+      "source": "particle-in-a-box",
+      "target": "quantum-harmonic-oscillator",
+      "type": "related",
+      "weight": 0.75
+    },
+    {
+      "source": "particle-in-a-box",
+      "target": "quantum-tunneling",
+      "type": "related",
+      "weight": 0.6
+    },
+    {
+      "source": "spin",
+      "target": "superposition-and-measurement",
+      "type": "related",
+      "weight": 0.6
+    },
+    {
+      "source": "spin",
+      "target": "quantum-computing",
+      "type": "related",
+      "weight": 0.6
+    }
+  ]
+}

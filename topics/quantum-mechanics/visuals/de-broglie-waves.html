@@ -1,0 +1,92 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#2563eb;--good:#16a34a;--bad:#dc2626;--line:#d7dce3}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#60a5fa;--good:#4ade80;--bad:#f87171;--line:#2a313b}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:82px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:96px;text-align:right}
+.eq{font-size:12.5px;color:var(--muted)}
+.eq b{color:var(--accent)}
+button.mini{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:6px 10px;cursor:pointer;font:12px system-ui}
+.fit{font-weight:600}.yes{color:var(--good)}.no{color:var(--bad)}
+</style>
+<div class="wrap">
+  <div><h1>de Broglie Waves</h1>
+  <div class="cap">An electron's wave has to close smoothly on itself to survive as an orbit. Slide the momentum: only whole numbers of wavelengths fit the ring (green). In between, the wave doesn't meet its own tail — no stable orbit.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="p">Momentum p</label><input id="p" type="range" min="100" max="800" step="1" value="255"><span class="val" id="pv"></span>
+      <button class="mini" id="snap">snap to nearest fit</button></div>
+    <div class="row"><span class="eq" id="eq"></span></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const P=document.getElementById('p'),PV=document.getElementById('pv'),EQ=document.getElementById('eq'),SNAP=document.getElementById('snap');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0;
+const Hc=2200; // h scale so lambda=Hc/p is pixel-ish
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function nval(){const R=Math.min(W,H)*0.30;const C=2*Math.PI*R;const lam=Hc/(+P.value);return C/lam;}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2,cy=H/2,R=Math.min(W,H)*0.30,C=2*Math.PI*R;
+  const lam=Hc/(+P.value);const n=C/lam;const nr=Math.round(n);
+  const closes=Math.abs(n-nr)<0.06;
+  const col=closes?css('--good'):css('--bad');
+  // base orbit
+  ctx.strokeStyle=css('--line');ctx.lineWidth=1.5;ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();ctx.setLineDash([]);
+  // nucleus
+  ctx.fillStyle=css('--accent');ctx.beginPath();ctx.arc(cx,cy,7,0,7);ctx.fill();
+  // wave around ring: displacement = A*sin(phase - t) with phase = arc/lam*2pi
+  const A=R*0.30;
+  ctx.strokeStyle=col;ctx.lineWidth=2.4;ctx.beginPath();
+  const steps=360;let sx0,sy0;
+  for(let i=0;i<=steps;i++){
+    const th=i/steps*2*Math.PI;
+    const arc=R*th;const phase=arc/lam*2*Math.PI;
+    const disp=A*Math.sin(phase - t);
+    const rr=R+disp;
+    const x=cx+rr*Math.cos(th),y=cy+rr*Math.sin(th);
+    if(i===0){ctx.moveTo(x,y);sx0=x;sy0=y;}else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  // mismatch marker: gap between end (theta=2pi) and start
+  const endDisp=A*Math.sin(C/lam*2*Math.PI - t);
+  const startDisp=A*Math.sin(0 - t);
+  if(!closes){
+    const th=0;const p1r=R+startDisp,p2r=R+endDisp;
+    const x1=cx+p1r*Math.cos(th),y1=cy+p1r*Math.sin(th);
+    const x2=cx+p2r*Math.cos(th),y2=cy+p2r*Math.sin(th);
+    ctx.strokeStyle=css('--bad');ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    ctx.fillStyle=css('--bad');ctx.font='600 11px system-ui';ctx.textAlign='left';
+    ctx.fillText('mismatch — wave misses its tail',cx+R*0.7,cy-R*0.9);
+  }
+  // labels
+  ctx.fillStyle=css('--fg');ctx.font='600 13px system-ui';ctx.textAlign='center';
+  ctx.fillText((closes?nr:n.toFixed(2))+' wavelengths around',cx,cy-R-16);
+  ctx.fillStyle=col;ctx.font='600 12px system-ui';
+  ctx.fillText(closes?('✓ fits — allowed orbit (n='+nr+')'):'✗ does not close',cx,cy+R+22);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt*2.2;draw();raf=requestAnimationFrame(loop);}
+function upd(){
+  const R=Math.min(W,H)*0.30||120;const lam=Hc/(+P.value);
+  PV.textContent='p = '+P.value;
+  EQ.innerHTML='<b>λ = h / p</b> — bigger momentum ⇒ shorter wavelength ⇒ more waves fit the ring. This standing-wave condition is why atoms have discrete energy levels.';
+}
+SNAP.onclick=()=>{const cx=1,R=Math.min(W,H)*0.30,C=2*Math.PI*R;const n=nval();const nr=Math.max(1,Math.round(n));const lam=C/nr;P.value=Math.round(Hc/lam);upd();};
+P.addEventListener('input',upd);
+addEventListener('resize',()=>{fit();upd();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();upd();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

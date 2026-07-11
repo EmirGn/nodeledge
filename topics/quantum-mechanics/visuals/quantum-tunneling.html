@@ -1,0 +1,82 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--wave:#2563eb;--trans:#16a34a;--barrier:#ef4444;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--wave:#60a5fa;--trans:#4ade80;--barrier:#f87171;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:120px}
+#w{accent-color:var(--barrier)}#h{accent-color:var(--barrier)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:60px;text-align:right}
+.tv{font-size:13px;font-weight:600;color:var(--trans)}
+.eq{font-size:11.5px;color:var(--muted);margin-top:6px}
+</style>
+<div class="wrap">
+  <div><h1>Quantum Tunneling</h1>
+  <div class="cap">The wave doesn't stop at the wall — it decays inside it. Make the barrier thinner (or lower) and more wave survives to the far side. Transmission falls off exponentially with thickness: T ≈ e^(−2κL).</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="w">Barrier width L</label><input id="w" type="range" min="20" max="180" value="80"><span class="val" id="wv"></span></div>
+    <div class="row"><label for="h">Barrier height</label><input id="h" type="range" min="1.4" max="10" step="0.1" value="5"><span class="val" id="hv"></span></div>
+    <div class="row"><span class="tv" id="tv"></span></div>
+    <div class="eq">Particle energy is fixed below the barrier top — classically it could <b>never</b> pass. Quantum mechanically, sometimes it does.</div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const Wd=document.getElementById('w'),Hh=document.getElementById('h'),WV=document.getElementById('wv'),HV=document.getElementById('hv'),TV=document.getElementById('tv');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0;
+const E=1;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const V=+Hh.value;const Lpx=Math.min(+Wd.value,W*0.4);
+  const mid=H*0.55,amp=H*0.20;
+  const bs=W*0.42,be=bs+Lpx;
+  const kappa=0.020*Math.sqrt(Math.max(0.001,V-E)); // per px
+  const transAmp=Math.exp(-kappa*Lpx); // transmitted amplitude factor
+  const T=transAmp*transAmp;
+  // barrier block
+  ctx.fillStyle=css('--barrier')+'22';ctx.fillRect(bs,H*0.14,Lpx,H*0.78);
+  ctx.strokeStyle=css('--barrier');ctx.lineWidth=2;ctx.strokeRect(bs,H*0.14,Lpx,H*0.78);
+  // energy line
+  ctx.strokeStyle=css('--muted');ctx.setLineDash([5,4]);ctx.lineWidth=1.2;
+  const eY=H*0.92-(E/10)*(H*0.78);ctx.beginPath();ctx.moveTo(0,eY);ctx.lineTo(W,eY);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='left';ctx.fillText('particle energy E',6,eY-4);
+  ctx.fillText('barrier',bs+6,H*0.14+14);
+  const k=0.10;
+  // incoming/left oscillating wave
+  ctx.strokeStyle=css('--wave');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let x=0;x<=bs;x++){const y=mid-Math.cos(k*x-t)*amp;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  // inside barrier: decaying envelope
+  const phaseAtBs=k*bs-t;
+  ctx.strokeStyle=css('--barrier');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let x=bs;x<=be;x++){const env=Math.exp(-kappa*(x-bs));const y=mid-Math.cos(phaseAtBs)*env*amp;if(x===bs)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  // decay envelope guide
+  ctx.strokeStyle=css('--barrier')+'66';ctx.setLineDash([3,3]);ctx.beginPath();
+  for(let x=bs;x<=be;x++){const env=Math.exp(-kappa*(x-bs));ctx.lineTo(x,mid-env*amp);}
+  ctx.stroke();ctx.beginPath();for(let x=bs;x<=be;x++){const env=Math.exp(-kappa*(x-bs));ctx.lineTo(x,mid+env*amp);}ctx.stroke();ctx.setLineDash([]);
+  // transmitted wave (reduced amplitude)
+  ctx.strokeStyle=css('--trans');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let x=be;x<=W;x++){const y=mid-Math.cos(k*(x-be)+phaseAtBs-0)*transAmp*amp;if(x===be)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  ctx.fillStyle=css('--trans');ctx.textAlign='center';ctx.font='600 11px system-ui';
+  ctx.fillText('transmitted',(be+W)/2,mid+amp+22);
+  TV.textContent='Transmission T ≈ '+(T*100).toFixed(T<0.01?3:1)+'%';
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt*4;draw();WV.textContent=Wd.value+' px';HV.textContent=(+Hh.value).toFixed(1);raf=requestAnimationFrame(loop);}
+addEventListener('resize',()=>{fit();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

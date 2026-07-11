@@ -1,0 +1,111 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#0891b2;--warn:#dc2626;--line:#d7dce3;--wall:#c3cad4;--dot:#f59e0b}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#22d3ee;--warn:#f87171;--line:#2a313b;--wall:#3a434f;--dot:#fbbf24}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+.toggle{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg);cursor:pointer;font-weight:600}
+.sw{width:40px;height:22px;border-radius:12px;background:var(--line);position:relative;transition:.15s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+input:checked+.sw{background:var(--warn)}input:checked+.sw::after{left:20px}
+label.rng{font-size:12.5px;color:var(--muted);min-width:78px}
+input[type=range]{flex:1;min-width:110px;accent-color:var(--accent)}
+button.mini{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:6px 10px;cursor:pointer;font:12px system-ui}
+.small{font-size:11.5px;color:var(--muted)}
+.hid{position:absolute;opacity:0;width:0;height:0}
+</style>
+<div class="wrap">
+  <div><h1>The Double-Slit Experiment</h1>
+  <div class="cap">Particles arrive one dot at a time, yet bright/dark interference bands build up — each went through both slits. Now flip the which-slit detector on: the pattern collapses into two plain bumps.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row">
+      <label class="toggle"><input type="checkbox" id="det" class="hid"><span class="sw"></span>Which-slit detector</label>
+      <button class="mini" id="reset">clear screen</button>
+      <span class="small" id="count">0 particles</span>
+    </div>
+    <div class="row">
+      <label class="rng" for="sep">Slit spacing d</label><input id="sep" type="range" min="30" max="120" value="70">
+      <span class="small" id="eq">d · sinθ = m · λ &nbsp;(wider d ⇒ tighter fringes)</span>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const DET=document.getElementById('det'),SEP=document.getElementById('sep'),RES=document.getElementById('reset'),CT=document.getElementById('count');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,hits=[],flying=[],n=0,raf=null,last=0;
+const LAM=42;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function gauss(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function slitY(which){const d=(+SEP.value);return 0.5+(which?d:-d)/2/ (H||400);}
+function sampleY(){
+  const d=+SEP.value;
+  if(DET.checked){
+    // detector on: which-path known -> two gaussians at slit positions, no interference
+    const s=Math.random()<0.5?-1:1;
+    return Math.max(0.03,Math.min(0.97,0.5 + s*d/2/H*1.0 + gauss()*0.06));
+  }
+  // interference: I(y) ~ cos^2(pi d y /(lam L)) * envelope
+  const L=H*0.45; // slit-screen distance in px units
+  for(let k=0;k<50;k++){
+    const y=0.5+gauss()*0.26;
+    const yy=(y-0.5)*H;
+    const env=Math.exp(-Math.pow(yy/(H*0.26),2)/2);
+    const fr=Math.pow(Math.cos(Math.PI*d*yy/(LAM*L)),2);
+    if(Math.random()<fr*env) return Math.max(0.03,Math.min(0.97,y));
+  }
+  return 0.5;
+}
+function emit(){const which=Math.random()<0.5?0:1;flying.push({t:0,which,ty:sampleY()});}
+function step(dt){
+  if(Math.random()<dt*10)emit();
+  flying.forEach(f=>f.t+=dt*1.5);
+  flying=flying.filter(f=>{if(f.t>=1){hits.push(f.ty);n++;return false;}return true;});
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const srcX=W*0.06,wallX=W*0.42,screenX=W*0.82;
+  const d=+SEP.value;const sy1=H*0.5-d/2,sy2=H*0.5+d/2;
+  // source
+  ctx.fillStyle=css('--accent');ctx.beginPath();ctx.arc(srcX,H*0.5,6,0,7);ctx.fill();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('gun',srcX,H*0.5+22);
+  // wall with two slits
+  ctx.fillStyle=css('--wall');
+  ctx.fillRect(wallX-5,0,10,sy1-8);
+  ctx.fillRect(wallX-5,sy1+8,10,(sy2-8)-(sy1+8));
+  ctx.fillRect(wallX-5,sy2+8,10,H-(sy2+8));
+  // detector indicator at slits
+  if(DET.checked){ctx.fillStyle=css('--warn');ctx.beginPath();ctx.arc(wallX+12,sy1,4,0,7);ctx.fill();ctx.beginPath();ctx.arc(wallX+12,sy2,4,0,7);ctx.fill();
+    ctx.font='600 10px system-ui';ctx.textAlign='left';ctx.fillText('watching',wallX+18,H*0.5);}
+  // screen
+  ctx.strokeStyle=css('--line');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(screenX,H*0.03);ctx.lineTo(screenX,H*0.97);ctx.stroke();
+  // hits
+  ctx.fillStyle=css('--dot');
+  for(const y of hits){ctx.globalAlpha=.7;ctx.beginPath();ctx.arc(screenX+2,y*H,2,0,7);ctx.fill();}
+  ctx.globalAlpha=1;
+  // flying
+  flying.forEach(f=>{const sy=f.which?sy2:sy1;
+    let x,y;
+    if(f.t<0.5){const tt=f.t/0.5;x=srcX+(wallX-srcX)*tt;y=H*0.5+(sy-H*0.5)*tt;}
+    else{const tt=(f.t-0.5)/0.5;x=wallX+(screenX-wallX)*tt;y=sy+(f.ty*H-sy)*tt;}
+    ctx.fillStyle=css('--accent');ctx.beginPath();ctx.arc(x,y,2.6,0,7);ctx.fill();});
+  ctx.fillStyle=css('--fg');ctx.font='600 12px system-ui';ctx.textAlign='left';
+  ctx.fillText(DET.checked?'Which-path known → no interference (two bumps)':'No which-path info → interference bands',12,20);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;step(dt);draw();CT.textContent=n+' particles';raf=requestAnimationFrame(loop);}
+RES.onclick=()=>{hits=[];n=0;};
+DET.onchange=()=>{hits=[];n=0;};
+SEP.oninput=()=>{hits=[];n=0;};
+addEventListener('resize',fit);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

@@ -1,0 +1,100 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--up:#2563eb;--down:#db2777;--magnet:#94a3b8;--line:#d7dce3}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--up:#60a5fa;--down:#f472b6;--magnet:#64748b;--line:#2a313b}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--up)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:70px;text-align:right}
+.toggle{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;cursor:pointer}
+.sw{width:40px;height:22px;border-radius:12px;background:var(--line);position:relative;transition:.15s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+input:checked+.sw{background:var(--magnet)}input:checked+.sw::after{left:20px}
+.hid{position:absolute;opacity:0;width:0;height:0}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>Quantum Spin — Stern-Gerlach</h1>
+  <div class="cap">Rotate the measurement axis to any angle you like: the beam always splits into exactly TWO spots — up or down — never a continuous smear. Flip on the classical prediction to see what should have happened.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="a">Measure axis</label><input id="a" type="range" min="0" max="180" value="0"><span class="val" id="av"></span>
+      <label class="toggle"><input type="checkbox" id="cl" class="hid"><span class="sw"></span>Classical prediction</label></div>
+    <div class="row"><span class="small" id="msg"></span></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const A=document.getElementById('a'),AV=document.getElementById('av'),CL=document.getElementById('cl'),MSG=document.getElementById('msg');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,flying=[],spots=[],nu=0,nd=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function theta(){return (+A.value)*Math.PI/180;}
+function emit(){
+  const th=theta();const p=Math.pow(Math.cos(th/2),2);
+  let s;if(CL.checked)s=Math.random()*2-1;else s=(Math.random()<p)?1:-1;
+  flying.push({t:0,s,th});
+}
+function step(dt){
+  if(Math.random()<dt*14)emit();
+  flying.forEach(f=>f.t+=dt*1.4);
+  flying=flying.filter(f=>{if(f.t>=1){spots.push({s:f.s,th:f.th});if(!CL.checked){if(f.s>0)nu++;else nd++;}return false;}return true;});
+  if(spots.length>1400)spots.splice(0,spots.length-1400);
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const srcX=W*0.06,magX=W*0.4,scrX=W*0.8,cy=H*0.5;
+  const th=theta();const ax=Math.sin(th),ay=-Math.cos(th); // axis unit (up direction)
+  const d=Math.min(H*0.34,W*0.18);
+  // magnet
+  ctx.save();ctx.translate(magX,cy);ctx.rotate(th);
+  ctx.fillStyle=css('--magnet');ctx.fillRect(-16,-46,32,20);ctx.fillRect(-16,26,32,20);
+  ctx.fillStyle=css('--fg');ctx.font='600 11px system-ui';ctx.textAlign='center';ctx.fillText('N',0,-31);ctx.fillText('S',0,40);
+  ctx.restore();
+  // source
+  ctx.fillStyle=css('--muted');ctx.beginPath();ctx.arc(srcX,cy,6,0,7);ctx.fill();
+  ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('atoms',srcX,cy+22);
+  // screen
+  ctx.strokeStyle=css('--line');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(scrX,H*0.05);ctx.lineTo(scrX,H*0.95);ctx.stroke();
+  // spot centers
+  const upC={x:scrX,y:cy+ay*d},dnC={x:scrX,y:cy-ay*d};
+  // accumulated spots
+  spots.forEach(sp=>{const a2=Math.sin(sp.th),b2=-Math.cos(sp.th);
+    let y;
+    if(CL.checked){y=cy - b2*d*sp.s + (Math.random()-0.5)*4;}
+    else{y=cy - b2*d*sp.s;}
+    const jitter=(Math.random()-0.5)*10;
+    ctx.fillStyle=sp.s>0?css('--up'):css('--down');ctx.globalAlpha=.5;
+    ctx.beginPath();ctx.arc(scrX+3,y+jitter,2.2,0,7);ctx.fill();});
+  ctx.globalAlpha=1;
+  // flying
+  flying.forEach(f=>{const b2=-Math.cos(f.th);
+    let x,y;
+    if(f.t<0.5){const tt=f.t/0.5;x=srcX+(magX-srcX)*tt;y=cy;}
+    else{const tt=(f.t-0.5)/0.5;x=magX+(scrX-magX)*tt;const targetY=cy-b2*d*f.s;y=cy+(targetY-cy)*tt;}
+    ctx.fillStyle=f.s>0?css('--up'):css('--down');ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();});
+  // labels
+  ctx.textAlign='left';ctx.font='600 12px system-ui';
+  if(CL.checked){ctx.fillStyle=css('--magnet');ctx.fillText('classical: continuous smear (wrong!)',12,20);}
+  else{ctx.fillStyle=css('--fg');ctx.fillText('quantum: exactly two spots — always',12,20);}
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;step(dt);draw();
+  const th=theta();const p=Math.pow(Math.cos(th/2),2);
+  AV.textContent=A.value+'°';
+  MSG.innerHTML=CL.checked?'Classical physics expected a continuous band. Reality refuses.':('For a z-up prepared beam: P(up)=cos²(θ/2)=<b>'+(p*100).toFixed(0)+'%</b> &nbsp; counts up/down: '+nu+' / '+nd);
+  raf=requestAnimationFrame(loop);}
+A.addEventListener('input',()=>{spots=[];nu=nd=0;});
+CL.addEventListener('change',()=>{spots=[];nu=nd=0;});
+addEventListener('resize',fit);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>
