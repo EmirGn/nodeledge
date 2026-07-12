@@ -54,6 +54,21 @@ function readTheme(): "dark" | "light" {
     : "dark";
 }
 
+// Stages of a live generation, in order: waiting for the route to ack the
+// stream, waiting for the model's first tokens, title parsed but no node yet,
+// nodes arriving. Each transition is a real stream event, never a timer.
+export type ChartingPhase =
+  | "contacting"
+  | "surveying"
+  | "resolving"
+  | "drawing";
+
+const CHARTING_STATUS: Record<Exclude<ChartingPhase, "drawing">, string> = {
+  contacting: "contacting the model",
+  surveying: "surveying the subject",
+  resolving: "resolving knownodes",
+};
+
 export default function GraphBoard({
   manifest,
   topicId,
@@ -65,7 +80,7 @@ export default function GraphBoard({
   initialKnown: string[];
   // Live-generation mode: nodes are still streaming in, nothing is persisted
   // yet — no node pages, no learner state, HUD reports charting progress.
-  charting?: boolean;
+  charting?: ChartingPhase | false;
 }) {
   const { nodes, edges, topic } = manifest;
 
@@ -112,6 +127,24 @@ export default function GraphBoard({
 
   // null during SSR/hydration, so server and client render identically.
   const theme = useSyncExternalStore(subscribeTheme, readTheme, () => null);
+
+  // Elapsed time since the charting board mounted — the HUD's proof that the
+  // request is alive while the model is still silent. Tenths of a second so
+  // it visibly moves.
+  const isCharting = Boolean(charting);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!isCharting) return;
+    const start = performance.now();
+    const id = setInterval(
+      () => setElapsed((performance.now() - start) / 1000),
+      100,
+    );
+    return () => clearInterval(id);
+  }, [isCharting]);
+  const elapsedLabel = `t+${Math.floor(elapsed / 60)}:${(elapsed % 60)
+    .toFixed(1)
+    .padStart(4, "0")}`;
 
   const statusOf = useMemo(() => {
     return (id: string): NodeStatus => {
@@ -431,6 +464,14 @@ export default function GraphBoard({
 
   return (
     <div ref={containerRef} className="board">
+      {charting && (
+        // Breathing glow where the graph will resolve; the first knownode
+        // visually takes over from it.
+        <div
+          className={nodes.length ? "pulse off" : "pulse"}
+          aria-hidden="true"
+        />
+      )}
       {size.w > 0 && (
         <svg
           width={size.w}
@@ -583,7 +624,15 @@ export default function GraphBoard({
         <Link href="/" className="wordmark">
           nodeledge
         </Link>
-        <span>/ {topic.title.toLowerCase()}</span>
+        <span
+          className={
+            charting === "contacting" || charting === "surveying"
+              ? "hud-title pending"
+              : "hud-title"
+          }
+        >
+          / {topic.title.toLowerCase()}
+        </span>
       </div>
 
       <div className="search">
@@ -622,18 +671,23 @@ export default function GraphBoard({
       <div className="hud hud-bl">
         <span>
           {charting
-            ? `charting the territory · ${nodes.length} knownode${nodes.length === 1 ? "" : "s"}`
+            ? charting === "drawing"
+              ? `charting the territory · ${nodes.length} knownode${nodes.length === 1 ? "" : "s"}`
+              : CHARTING_STATUS[charting]
             : `layout: force · ${view.running ? "running" : "settled"}`}
+          {charting && <span className="cursor" aria-hidden="true" />}
         </span>
       </div>
 
       <div className="hud hud-br">
-        <span>
-          {trace
-            ? `trace: ${trace.length} step${trace.length === 1 ? "" : "s"}`
-            : matchSet
-              ? `${matchSet.size} match${matchSet.size === 1 ? "" : "es"}`
-              : `${frontierCount} within reach`}
+        <span className={charting ? "elapsed" : undefined}>
+          {charting
+            ? elapsedLabel
+            : trace
+              ? `trace: ${trace.length} step${trace.length === 1 ? "" : "s"}`
+              : matchSet
+                ? `${matchSet.size} match${matchSet.size === 1 ? "" : "es"}`
+                : `${frontierCount} within reach`}
         </span>
       </div>
 

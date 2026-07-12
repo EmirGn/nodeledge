@@ -6,9 +6,11 @@ import { persistTopic } from "@/lib/topics";
 // Graph generation is a single long model call, streamed to the client.
 export const maxDuration = 300;
 
-// Streams NDJSON events while the model draws the graph: "meta", then "node"
-// and "edge" as each element completes, then "done" with the persisted topic
-// id — or "error". Validation failures still return plain JSON errors.
+// Streams NDJSON events while the model draws the graph: "status" as soon as
+// the stream opens (so the client can stage its waiting UI on a real signal),
+// "meta" once the title parses, then "node" and "edge" as each element
+// completes, then "done" with the persisted topic id — or "error".
+// Validation failures still return plain JSON errors.
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
@@ -28,6 +30,9 @@ export async function POST(request: Request) {
       const send = (event: unknown) =>
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       try {
+        // Ack before the model call: from here the client's wait is the
+        // model's time-to-first-token, not the network or auth.
+        send({ type: "status" });
         const gen = streamTopicGraph(prompt);
         let step = await gen.next();
         while (!step.done) {
