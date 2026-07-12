@@ -8,3 +8,6 @@ web/next-env.d.ts
 .DS_Store
 *.log
 .env*
+
+# session artifacts (screenshots shared while pairing), not project content
+proof/

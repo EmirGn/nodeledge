@@ -39,26 +39,53 @@ spitting out text. A graph answers the questions you didn't know to ask.
   AI agents) contribute topic packages. Free community, human-vouched quality over raw AI
   output. Explicitly deferred until the single-topic experience proves itself.
 
+## Current architecture (July 2026 pivot)
+
+nodeledge is a multi-user app, not a single-package player: a signed-in user types what they
+want to learn, `claude-opus-4-8` generates the knownode graph (structured output), and it's
+stored privately per user. Node bodies are generated lazily on first open. Learner state
+(known nodes) drives the graph rendering: known / within-reach frontier / locked, expressed
+purely through brightness, plus "trace prerequisites" (topologically ordered path to any
+locked node). The quantum-mechanics package remains a shared file-based demo.
+
+- Auth: Better Auth, email+password. Custom `/login`; `web/src/proxy.ts` does the optimistic
+  cookie redirect; real enforcement is `requireUser()` in `web/src/lib/session.ts` (call it in
+  every page/action/handler).
+- DB: Drizzle + Postgres only (PGlite was tried and abandoned — single-writer, breaks under
+  Next dev's per-route module graphs). Local dev: `docker compose up -d` in `web/` (port
+  5433); prod: `DATABASE_URL`. Migrations live in `web/drizzle/` (generate with
+  `npx drizzle-kit generate`; applied automatically on boot by `web/src/lib/db/index.ts`).
+  Never use `drizzle-kit push` against the dev DB.
+- Generation: prompts + validation in `web/src/lib/generate.ts`, provider switch in
+  `web/src/lib/model.ts` — Claude (`claude-opus-4-8`) is the production model, Gemini is the
+  dev-time backend (founder's call: don't burn Claude credits while iterating). Picked by
+  `MODEL_PROVIDER` env, else whichever of `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` is set
+  (Anthropic wins if both). Persisted via `web/src/lib/topics.ts`. `POST /api/topics` streams
+  NDJSON (`meta`/`node`/`edge`, then `done` with the persisted id), parsed incrementally from
+  the model's JSON output — the Atlas swaps to the graph board on submit and draws knownodes
+  as they arrive; the DB write happens once at the end from the full sanitized graph.
+- Next.js 16: `middleware` is `proxy.ts`, `cookies()`/`params` are async — read
+  `web/AGENTS.md` and the bundled docs before writing Next code from memory.
+
 ## Repo layout
 
 - `FORMAT.md` — nodeledge package format spec v1.0 (the import/export contract; read before
   touching package files)
 - `topics/quantum-mechanics/` — the seed topic package: 15 nodes, 28 edges (17 prerequisite +
-  11 related), one interactive visual per node
-- `web/` — Next.js app (TypeScript, Tailwind, App Router, `src/` dir): the "player" that renders
-  packages. Kept strictly separate from packages so topics stay portable.
+  11 related), one interactive visual per node; served as the shared demo at
+  `/t/quantum-mechanics`
+- `web/` — Next.js app (TypeScript, Tailwind, App Router, `src/` dir): auth, DB, generation,
+  and the graph UI. Packages stay portable and separate from the app.
 - `nodeledge.pdf`, `secondthoughts.png` — the founder's hand-drawn idea sketches (source of
   truth for intent; re-read when direction is unclear)
 
-## Design direction (in flux — no DESIGN.md yet)
+## Design
 
-Decided so far: **anti-corporate** (enemy brand: Coursera/Udemy — nothing MOOC-like, no stock
-gloss), **dark and calm**, and the founder ranked a warm hand-drawn "chalkboard" treatment above
-slick product styling. Current prototype: full-screen slate-green board, chalk-ivory hand-drawn
-nodes (wobbly outlined shapes containing the concept name), chalk-yellow accent, dashed chalk
-edges. Typography and final direction not yet locked — when they are, write DESIGN.md and treat
-it as law. The founder cares a lot about design; never default to generic startup UI (purple
-gradients, feature cards, hero sections).
+**DESIGN.md exists and is law.** Monochrome Observatory direction: brightness is hierarchy,
+IBM Plex Sans/Mono, 2px radii, border-defined surfaces, instrument voice. Every new surface
+reuses the tokens and classes in `web/src/app/globals.css` — no new visual language. The
+founder cares a lot about design; never default to generic startup UI (purple gradients,
+feature cards, hero sections).
 
 ## Working conventions
 

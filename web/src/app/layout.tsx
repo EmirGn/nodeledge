@@ -25,8 +25,14 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // suppressHydrationWarning: the inline script below stamps data-theme onto
+  // <html> before hydration, so its attributes legitimately differ from SSR.
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable} antialiased`}>
+    <html
+      lang="en"
+      className={`${plexSans.variable} ${plexMono.variable} antialiased`}
+      suppressHydrationWarning
+    >
       <body>
         <script
           dangerouslySetInnerHTML={{

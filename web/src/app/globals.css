@@ -71,6 +71,24 @@ body {
   user-select: none;
 }
 
+/* Each knownode brightens into existence — matters most while a graph is
+   streaming in node by node. Ends on the element's own opacity attribute. */
+@keyframes node-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.knownode {
+  animation: node-in 600ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knownode {
+    animation: none;
+  }
+}
+
 /* ——— HUD chrome ——— */
 
 .hud {
@@ -212,6 +230,27 @@ body {
   color: var(--ink);
 }
 
+.trace-panel {
+  top: auto;
+  bottom: 56px;
+  left: 16px;
+  right: auto;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+.trace-steps {
+  gap: 6px 8px;
+}
+.trace-index {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.generating {
+  border-left: 2px solid var(--muted);
+  padding-left: 10px;
+}
+
 .chip {
   background: none;
   border: 1px solid var(--line);
@@ -276,12 +315,180 @@ body {
   margin: 0;
 }
 
+/* ——— atlas (home) ——— */
+
+.atlas {
+  overflow-y: auto;
+}
+.atlas-center {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 56px;
+  padding: 96px 24px;
+}
+.atlas-ask {
+  width: min(560px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.atlas-input {
+  position: static;
+  transform: none;
+  width: 100%;
+  padding: 12px 16px;
+  cursor: text;
+}
+.atlas-input input {
+  font-size: 14px;
+}
+.atlas-status {
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.atlas-error {
+  color: var(--ink);
+  border-left: 2px solid var(--muted);
+  padding-left: 10px;
+}
+.atlas-list {
+  width: min(560px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.atlas-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 10px 14px;
+  text-decoration: none;
+  transition: border-color 150ms ease-out;
+}
+.atlas-row:hover,
+.atlas-row:focus-visible {
+  border-color: var(--muted);
+  outline: none;
+}
+.atlas-row-title {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.atlas-row-meta {
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.atlas-list .eyebrow {
+  margin-bottom: 6px;
+}
+
+/* ——— gate (login) ——— */
+
+.gate {
+  display: grid;
+  place-items: center;
+}
+.gate-panel {
+  width: min(380px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 28px 32px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gate-panel h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.field span {
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+.field input {
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 150ms ease-out;
+}
+.field input:focus-visible {
+  border-color: var(--muted);
+}
+.field-error {
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  color: var(--ink);
+  border-left: 2px solid var(--muted);
+  padding-left: 10px;
+  margin: 0;
+}
+.gate-submit {
+  margin-top: 6px;
+  background: var(--bright);
+  color: var(--canvas);
+  border: 1px solid var(--bright);
+  border-radius: 2px;
+  font-family: var(--font-mono), monospace;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: opacity 150ms ease-out;
+}
+.gate-submit:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.gate-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gate-switch {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
 /* ——— node article page ——— */
 
 .article {
   max-width: 720px;
   margin: 0 auto;
   padding: 72px 32px 120px;
+  /* Safari paints multi-line text selection out to the window edges when the
+     column is narrower than the viewport; clipping paint to the article box
+     keeps the highlight on the text. */
+  contain: paint;
 }
 .article-top {
   display: flex;

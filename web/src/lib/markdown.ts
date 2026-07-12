@@ -1,5 +1,8 @@
+import katex from "katex";
+
 // Minimal renderer for the subset of Markdown the package format allows in
-// node bodies (h2–h4, paragraphs, lists, bold/italic/code). No HTML passthrough.
+// node bodies (h2–h4, paragraphs, lists, bold/italic/code, TeX math).
+// No HTML passthrough.
 
 function escapeHtml(s: string): string {
   return s
@@ -9,11 +12,37 @@ function escapeHtml(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
+// Placeholder delimiter for stashed spans: NUL cannot occur in markdown text.
+const NUL = String.fromCharCode(0);
+const RESTORE = new RegExp(`${NUL}(\\d+)${NUL}`, "g");
+
+// Code spans and math are lifted out before escaping/formatting (so `$`, `_`,
+// `*`, `<` inside them survive — and a `$` in code can't pair with a `$` in
+// prose), then spliced back at the end.
 function inline(s: string): string {
-  return escapeHtml(s)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
+  const stash: string[] = [];
+  const put = (html: string) => {
+    stash.push(html);
+    return `${NUL}${stash.length - 1}${NUL}`;
+  };
+  const tex = (t: string, displayMode: boolean) =>
+    put(katex.renderToString(t, { displayMode, throwOnError: false }));
+  const text = s
+    .replace(/`([^`]+)`/g, (_, code: string) =>
+      put(`<code>${escapeHtml(code)}</code>`),
+    )
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, t: string) => tex(t, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, t: string) => tex(t, true))
+    .replace(/\\\((.+?)\\\)/g, (_, t: string) => tex(t, false))
+    // $inline$: no whitespace just inside the delimiters and no digit after
+    // the closing one, so "$5 and $10" stays prose (pandoc's rule)
+    .replace(/\$(?!\s)([^$\n]*[^$\s])\$(?!\d)/g, (_, t: string) =>
+      tex(t, false),
+    );
+  return escapeHtml(text)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(RESTORE, (_, i: string) => stash[Number(i)]);
 }
 
 export function renderMarkdown(md: string): string {
