@@ -15,7 +15,12 @@ const DATABASE_URL =
 async function buildDb() {
   const client = postgres(DATABASE_URL, { prepare: false });
   const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder: "./drizzle" });
+  // `next build` imports route modules while collecting page data; the DB
+  // may not be reachable then (and a build must not mutate it). Migrations
+  // still run on the first import in every real server process.
+  if (process.env.NEXT_PHASE !== "phase-production-build") {
+    await migrate(db, { migrationsFolder: "./drizzle" });
+  }
   return db;
 }
 
