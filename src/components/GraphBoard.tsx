@@ -1,17 +1,72 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Manifest } from "@/lib/topic";
 
 type Vec = { x: number; y: number; vx: number; vy: number };
+type NodeStatus = "known" | "open" | "locked";
+
+// What render reads: an immutable snapshot the simulation publishes each
+// frame — the mutable Vec map stays inside the loop, out of render.
+type View = {
+  positions: ReadonlyMap<string, { x: number; y: number }>;
+  running: boolean;
+  dragging: boolean;
+};
 
 const PAD_X = 120;
 const PAD_TOP = 140;
 const PAD_BOTTOM = 100;
 const ALPHA_MIN = 0.004;
+// Minimum pair spacing — an ellipse, wider than tall, because each node
+// carries a text label underneath that needs horizontal clearance.
+const SEP_X = 108;
+const SEP_Y = 60;
 
-export default function GraphBoard({ manifest }: { manifest: Manifest }) {
+// Theme lives outside React: the <html> data-theme attribute (stamped by the
+// pre-hydration script or the toggle), falling back to the OS preference.
+function subscribeTheme(onChange: () => void) {
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  mq.addEventListener("change", onChange);
+  const mo = new MutationObserver(onChange);
+  mo.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  return () => {
+    mq.removeEventListener("change", onChange);
+    mo.disconnect();
+  };
+}
+
+function readTheme(): "dark" | "light" {
+  const forced = document.documentElement.dataset.theme;
+  if (forced === "dark" || forced === "light") return forced;
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
+}
+
+export default function GraphBoard({
+  manifest,
+  topicId,
+  initialKnown,
+  charting = false,
+}: {
+  manifest: Manifest;
+  topicId: string;
+  initialKnown: string[];
+  // Live-generation mode: nodes are still streaming in, nothing is persisted
+  // yet — no node pages, no learner state, HUD reports charting progress.
+  charting?: boolean;
+}) {
   const { nodes, edges, topic } = manifest;
 
   const degree = useMemo(() => {
@@ -23,17 +78,18 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
     return d;
   }, [edges]);
 
+  const prereqOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const e of edges) {
+      if (e.type !== "prerequisite") continue;
+      m.set(e.target, [...(m.get(e.target) ?? []), e.source]);
+    }
+    return m;
+  }, [edges]);
+
   const maxLevel = useMemo(
     () => Math.max(1, ...nodes.map((n) => n.level)),
     [nodes],
-  );
-
-  const entryCount = useMemo(
-    () =>
-      nodes.filter(
-        (n) => !edges.some((e) => e.type === "prerequisite" && e.target === n.id),
-      ).length,
-    [nodes, edges],
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,11 +99,32 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
   const dragRef = useRef<{ id: string; moved: number } | null>(null);
 
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [, setFrame] = useState(0);
+  const [view, setView] = useState<View>({
+    positions: new Map(),
+    running: true,
+    dragging: false,
+  });
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [theme, setTheme] = useState<"dark" | "light" | null>(null);
+  const [known, setKnown] = useState<Set<string>>(() => new Set(initialKnown));
+  const [trace, setTrace] = useState<string[] | null>(null);
+
+  // null during SSR/hydration, so server and client render identically.
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => null);
+
+  const statusOf = useMemo(() => {
+    return (id: string): NodeStatus => {
+      if (known.has(id)) return "known";
+      const reqs = prereqOf.get(id) ?? [];
+      return reqs.every((r) => known.has(r)) ? "open" : "locked";
+    };
+  }, [known, prereqOf]);
+
+  const frontierCount = useMemo(
+    () => nodes.filter((n) => statusOf(n.id) === "open").length,
+    [nodes, statusOf],
+  );
 
   useEffect(() => {
     const el = containerRef.current;
@@ -59,29 +136,24 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
     return () => ro.disconnect();
   }, []);
 
+  // seed positions: x by prerequisite level, y spread deterministically.
+  // Runs whenever nodes change so streamed-in nodes get seats too; existing
+  // positions are never touched, and arrivals reheat the simulation.
   useEffect(() => {
-    const forced = document.documentElement.dataset.theme;
-    if (forced === "dark" || forced === "light") setTheme(forced);
-    else
-      setTheme(
-        window.matchMedia("(prefers-color-scheme: light)").matches
-          ? "light"
-          : "dark",
-      );
-  }, []);
-
-  // seed positions once: x by prerequisite level, y spread deterministically
-  useEffect(() => {
-    if (!size.w || !size.h || posRef.current.size) return;
+    if (!size.w || !size.h) return;
+    let added = false;
     nodes.forEach((n, i) => {
+      if (posRef.current.has(n.id)) return;
       posRef.current.set(n.id, {
         x: PAD_X + (n.level / maxLevel) * (size.w - PAD_X * 2),
         y: PAD_TOP + (((i * 0.618034) % 1) * (size.h - PAD_TOP - PAD_BOTTOM)),
         vx: 0,
         vy: 0,
       });
+      added = true;
     });
-    setFrame((f) => f + 1);
+    // Reheat; the simulation publishes the new seats on its next frame.
+    if (added) alphaRef.current = Math.max(alphaRef.current, 0.6);
   }, [size, nodes, maxLevel]);
 
   // force simulation
@@ -90,11 +162,28 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
       alphaRef.current = Math.min(alphaRef.current, 0.3); // settle fast, no long animation
 
+    const publish = (running: boolean) =>
+      setView({
+        positions: new Map(
+          Array.from(posRef.current, ([id, v]) => [id, { x: v.x, y: v.y }]),
+        ),
+        running,
+        dragging: Boolean(dragRef.current),
+      });
+
     let raf = 0;
+    let idle = false;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const a = alphaRef.current;
-      if (a <= ALPHA_MIN && !dragRef.current) return;
+      if (a <= ALPHA_MIN && !dragRef.current) {
+        if (!idle) {
+          idle = true;
+          publish(false);
+        }
+        return;
+      }
+      idle = false;
 
       const pts = nodes.map((n) => ({ n, p: posRef.current.get(n.id)! }));
       for (let i = 0; i < pts.length; i++) {
@@ -118,8 +207,8 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
         const p = posRef.current.get(e.source);
         const q = posRef.current.get(e.target);
         if (!p || !q) continue;
-        const rest = e.type === "prerequisite" ? 190 : 270;
-        const k = e.type === "prerequisite" ? 0.05 : 0.012;
+        const rest = e.type === "prerequisite" ? 210 : 270;
+        const k = e.type === "prerequisite" ? 0.04 : 0.01;
         const dx = q.x - p.x;
         const dy = q.y - p.y;
         const d = Math.hypot(dx, dy) || 1;
@@ -129,13 +218,38 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
         q.vx -= dx * f;
         q.vy -= dy * f;
       }
+      // firm spacing floor, resolved positionally (not via velocity) so
+      // overlaps untangle even as the simulation cools; a dragged node stays
+      // pinned and its neighbour takes the whole push
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const p = pts[i].p;
+          const q = pts[j].p;
+          let dx = q.x - p.x;
+          const dy = q.y - p.y;
+          if (!dx && !dy) dx = 0.5;
+          const nd = Math.hypot(dx / SEP_X, dy / SEP_Y);
+          if (nd >= 1) continue;
+          const k = (1 / Math.max(nd, 0.2) - 1) * 0.35;
+          const iPinned = dragRef.current?.id === pts[i].n.id;
+          const jPinned = dragRef.current?.id === pts[j].n.id;
+          if (!iPinned) {
+            p.x -= dx * k * (jPinned ? 1 : 0.5);
+            p.y -= dy * k * (jPinned ? 1 : 0.5);
+          }
+          if (!jPinned) {
+            q.x += dx * k * (iPinned ? 1 : 0.5);
+            q.y += dy * k * (iPinned ? 1 : 0.5);
+          }
+        }
+      }
       for (const { n, p } of pts) {
         if (dragRef.current?.id === n.id) {
           p.vx = 0;
           p.vy = 0;
         } else {
           const tx = PAD_X + (n.level / maxLevel) * (size.w - PAD_X * 2);
-          p.vx += (tx - p.x) * 0.05 * a;
+          p.vx += (tx - p.x) * 0.08 * a;
           p.vy += (size.h / 2 - p.y) * 0.006 * a;
           p.vx *= 0.6;
           p.vy *= 0.6;
@@ -146,7 +260,7 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
         p.y = Math.min(Math.max(p.y, PAD_TOP), size.h - PAD_BOTTOM);
       }
       if (!dragRef.current) alphaRef.current *= 0.985;
-      setFrame((f) => f + 1);
+      publish(true);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
@@ -161,6 +275,7 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
       } else if (e.key === "Escape") {
         setQuery("");
         setSelectedId(null);
+        setTrace(null);
         inputRef.current?.blur();
       }
     };
@@ -200,11 +315,68 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
+    // The data-theme MutationObserver in subscribeTheme picks this up.
     document.documentElement.dataset.theme = next;
     try {
       localStorage.setItem("nl-theme", next);
     } catch {}
-    setTheme(next);
+  };
+
+  const markKnown = async (id: string, next: boolean) => {
+    setKnown((prev) => {
+      const s = new Set(prev);
+      if (next) s.add(id);
+      else s.delete(id);
+      return s;
+    });
+    const res = await fetch("/api/known", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topicId, nodeId: id, known: next }),
+    });
+    if (!res.ok) {
+      setKnown((prev) => {
+        const s = new Set(prev);
+        if (next) s.delete(id);
+        else s.add(id);
+        return s;
+      });
+    }
+  };
+
+  // Prerequisite path: every not-yet-understood ancestor of the target,
+  // topologically ordered — the curriculum the graph implies.
+  const traceTo = (target: string) => {
+    const needed = new Set<string>();
+    const visit = (id: string) => {
+      if (needed.has(id) || known.has(id)) return;
+      needed.add(id);
+      for (const r of prereqOf.get(id) ?? []) visit(r);
+    };
+    visit(target);
+
+    const indegree = new Map<string, number>();
+    for (const id of needed) indegree.set(id, 0);
+    for (const e of edges) {
+      if (e.type !== "prerequisite") continue;
+      if (needed.has(e.source) && needed.has(e.target)) {
+        indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
+      }
+    }
+    const queue = [...needed].filter((id) => indegree.get(id) === 0).sort();
+    const order: string[] = [];
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const e of edges) {
+        if (e.type !== "prerequisite" || e.source !== id) continue;
+        if (!needed.has(e.target)) continue;
+        const d = (indegree.get(e.target) ?? 0) - 1;
+        indegree.set(e.target, d);
+        if (d === 0) queue.push(e.target);
+      }
+    }
+    setTrace(order);
   };
 
   const q = query.trim().toLowerCase();
@@ -235,19 +407,26 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
   const prereqs = selected
-    ? edges
-        .filter((e) => e.type === "prerequisite" && e.target === selected.id)
-        .map((e) => nodes.find((n) => n.id === e.source))
+    ? (prereqOf.get(selected.id) ?? [])
+        .map((id) => nodes.find((n) => n.id === id))
         .filter((n): n is NonNullable<typeof n> => Boolean(n))
     : [];
+  const unmet = selected
+    ? prereqs.filter((p) => !known.has(p.id)).length
+    : 0;
+  const selectedStatus = selected ? statusOf(selected.id) : null;
+
+  const traceSet = trace ? new Set(trace) : null;
+  const traceIndex = trace
+    ? new Map(trace.map((id, i) => [id, i + 1]))
+    : null;
 
   const hovered =
-    hoverId && hoverId !== selectedId && !dragRef.current
+    hoverId && hoverId !== selectedId && !view.dragging
       ? nodes.find((n) => n.id === hoverId) ?? null
       : null;
-  const hoverPos = hovered ? posRef.current.get(hovered.id) : null;
+  const hoverPos = hovered ? view.positions.get(hovered.id) : null;
 
-  const running = alphaRef.current > ALPHA_MIN;
   const label = (title: string) => title.split(" & ")[0];
 
   return (
@@ -268,15 +447,21 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
           </defs>
 
           {edges.map((e, i) => {
-            const p = posRef.current.get(e.source);
-            const t = posRef.current.get(e.target);
+            const p = view.positions.get(e.source);
+            const t = view.positions.get(e.target);
             if (!p || !t) return null;
             const touchesSelected =
               selectedId !== null &&
               (e.source === selectedId || e.target === selectedId);
             const base = e.type === "prerequisite" ? 0.38 : 0.14;
-            const dimmed =
-              matchSet && !matchSet.has(e.source) && !matchSet.has(e.target);
+            const inTrace =
+              traceSet &&
+              e.type === "prerequisite" &&
+              traceSet.has(e.source) &&
+              traceSet.has(e.target);
+            const dimmed = traceSet
+              ? !inTrace
+              : matchSet && !matchSet.has(e.source) && !matchSet.has(e.target);
             return (
               <line
                 key={i}
@@ -284,27 +469,59 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
                 y1={p.y}
                 x2={t.x}
                 y2={t.y}
-                stroke={touchesSelected ? "var(--ink)" : "var(--muted)"}
+                stroke={inTrace || touchesSelected ? "var(--ink)" : "var(--muted)"}
                 strokeWidth={e.type === "prerequisite" ? 1.2 : 1}
-                opacity={dimmed ? base * 0.25 : touchesSelected ? Math.min(base * 1.8, 0.75) : base}
+                opacity={
+                  dimmed
+                    ? base * 0.2
+                    : inTrace
+                      ? 0.8
+                      : touchesSelected
+                        ? Math.min(base * 1.8, 0.75)
+                        : base
+                }
               />
             );
           })}
 
           {nodes.map((n) => {
-            const p = posRef.current.get(n.id);
+            const p = view.positions.get(n.id);
             if (!p) return null;
             const deg = degree.get(n.id) ?? 1;
             const r = 4 + Math.min(4, deg * 0.6);
             const isSel = n.id === selectedId;
             const isHover = n.id === hoverId;
-            const major = deg >= 4;
-            const dimmed = matchSet && !matchSet.has(n.id);
+            const status = statusOf(n.id);
+            const inTrace = traceSet?.has(n.id) ?? false;
+            const dimmed = traceSet
+              ? !inTrace && !isSel
+              : matchSet
+                ? !matchSet.has(n.id)
+                : false;
+
+            // brightness carries learner state: frontier brightest, then
+            // locked territory, then what's already understood (settled)
+            const groupOpacity = dimmed
+              ? 0.15
+              : status === "known"
+                ? 0.4
+                : status === "locked" && !inTrace
+                  ? 0.65
+                  : 1;
+            const fill = isSel
+              ? "var(--bright)"
+              : status === "open" || inTrace
+                ? "var(--ink)"
+                : "var(--muted)";
+            const glowScale =
+              isSel ? 2.6 : isHover ? 1.7 : status === "open" ? 1.3 : 0.6;
+
             return (
               <g
                 key={n.id}
+                className="knownode"
                 transform={`translate(${p.x},${p.y})`}
-                opacity={dimmed ? 0.18 : 1}
+                opacity={groupOpacity}
                 style={{ cursor: "grab" }}
                 onPointerDown={(e) => startDrag(n.id, e)}
                 onPointerEnter={() => setHoverId(n.id)}
@@ -316,17 +533,10 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
                   r={r * 7}
                   fill="url(#nl-glow)"
                   pointerEvents="none"
-                  style={{
-                    opacity: `calc(var(--glow) * ${isSel ? 2.6 : isHover ? 1.7 : 1})`,
-                  }}
+                  style={{ opacity: `calc(var(--glow) * ${glowScale})` }}
                 />
                 <circle r={Math.max(r + 12, 16)} fill="transparent" />
-                <circle
-                  r={isSel ? r + 1.5 : r}
-                  fill={
-                    isSel ? "var(--bright)" : major ? "var(--ink)" : "var(--muted)"
-                  }
-                />
+                <circle r={isSel ? r + 1.5 : r} fill={fill} />
                 {isSel && (
                   <circle
                     r={r + 10}
@@ -336,13 +546,30 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
                     opacity="0.7"
                   />
                 )}
+                {inTrace && traceIndex && (
+                  <text
+                    y={-(r + 10)}
+                    textAnchor="middle"
+                    className="node-label trace-index"
+                    pointerEvents="none"
+                    fill="var(--bright)"
+                  >
+                    {traceIndex.get(n.id)}
+                  </text>
+                )}
                 <text
                   y={r + 22}
                   textAnchor="middle"
                   className="node-label"
                   pointerEvents="none"
-                  fill={isSel ? "var(--bright)" : major ? "var(--ink)" : "var(--muted)"}
-                  fontWeight={isSel ? 500 : 400}
+                  fill={
+                    isSel
+                      ? "var(--bright)"
+                      : status === "open" || inTrace
+                        ? "var(--ink)"
+                        : "var(--muted)"
+                  }
+                  fontWeight={isSel || inTrace ? 500 : 400}
                 >
                   {label(n.title)}
                 </text>
@@ -353,8 +580,10 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
       )}
 
       <div className="hud hud-tl">
-        <span className="wordmark">nodeledge</span>
-        <span>/ {topic.slug}</span>
+        <Link href="/" className="wordmark">
+          nodeledge
+        </Link>
+        <span>/ {topic.title.toLowerCase()}</span>
       </div>
 
       <div className="search">
@@ -366,7 +595,7 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
           onKeyDown={(e) => {
             if (e.key === "Enter") selectFirstMatch();
           }}
-          placeholder="search what you want to learn"
+          placeholder="search this graph"
           aria-label="Search knownodes"
           spellCheck={false}
         />
@@ -374,9 +603,11 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
       </div>
 
       <div className="hud hud-tr">
-        <span>
-          {nodes.length} knownodes · {edges.length} edges
-        </span>
+        {!charting && (
+          <span>
+            {known.size}/{nodes.length} understood
+          </span>
+        )}
         {theme && (
           <button
             className="hud-btn"
@@ -389,14 +620,20 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
       </div>
 
       <div className="hud hud-bl">
-        <span>layout: force · {running ? "running" : "settled"}</span>
+        <span>
+          {charting
+            ? `charting the territory · ${nodes.length} knownode${nodes.length === 1 ? "" : "s"}`
+            : `layout: force · ${view.running ? "running" : "settled"}`}
+        </span>
       </div>
 
       <div className="hud hud-br">
         <span>
-          {matchSet
-            ? `${matchSet.size} match${matchSet.size === 1 ? "" : "es"}`
-            : `${entryCount} entry point${entryCount === 1 ? "" : "s"}`}
+          {trace
+            ? `trace: ${trace.length} step${trace.length === 1 ? "" : "s"}`
+            : matchSet
+              ? `${matchSet.size} match${matchSet.size === 1 ? "" : "es"}`
+              : `${frontierCount} within reach`}
         </span>
       </div>
 
@@ -422,7 +659,13 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
           >
             ×
           </button>
-          <p className="eyebrow">selected node</p>
+          <p className="eyebrow">
+            {selectedStatus === "known"
+              ? "understood"
+              : selectedStatus === "open"
+                ? "within reach"
+                : `${unmet} prerequisite${unmet === 1 ? "" : "s"} unmet`}
+          </p>
           <h2>{selected.title}</h2>
           <p className="summary">{selected.summary}</p>
           <p className="row">
@@ -431,16 +674,60 @@ export default function GraphBoard({ manifest }: { manifest: Manifest }) {
               <button
                 key={p.id}
                 className="chip"
+                style={known.has(p.id) ? { opacity: 0.5 } : undefined}
                 onClick={() => setSelectedId(p.id)}
               >
                 {label(p.title).toLowerCase()}
               </button>
             ))}
           </p>
-          <p className="row" style={{ marginTop: 14 }}>
-            <Link href={`/node/${selected.id}`} className="action">
-              open node →
-            </Link>
+          {!charting && (
+            <p className="row" style={{ marginTop: 14 }}>
+              <Link href={`/t/${topicId}/node/${selected.id}`} className="action">
+                open node →
+              </Link>
+              <button
+                className="chip"
+                onClick={() =>
+                  markKnown(selected.id, selectedStatus !== "known")
+                }
+              >
+                {selectedStatus === "known" ? "unmark ×" : "mark as understood"}
+              </button>
+              {selectedStatus === "locked" && (
+                <button className="chip" onClick={() => traceTo(selected.id)}>
+                  trace prerequisites
+                </button>
+              )}
+            </p>
+          )}
+        </div>
+      )}
+
+      {trace && (
+        <div className="panel trace-panel">
+          <button
+            className="close"
+            onClick={() => setTrace(null)}
+            aria-label="Clear trace"
+          >
+            ×
+          </button>
+          <p className="eyebrow">prerequisite path</p>
+          <p className="row trace-steps">
+            {trace.map((id, i) => {
+              const n = nodes.find((x) => x.id === id);
+              if (!n) return null;
+              return (
+                <button
+                  key={id}
+                  className="chip"
+                  onClick={() => setSelectedId(id)}
+                >
+                  {i + 1} · {label(n.title).toLowerCase()}
+                </button>
+              );
+            })}
           </p>
         </div>
       )}

@@ -38,6 +38,9 @@ const TOPICS_DIR = fs.existsSync(LOCAL_TOPICS)
 
 const SAFE_ID = /^[a-z0-9-]+$/;
 
+// The shared, file-based demo package; every other topic id is a DB row.
+export const DEMO_TOPIC = "quantum-mechanics";
+
 export function loadManifest(slug: string): Manifest {
   if (!SAFE_ID.test(slug)) throw new Error(`invalid topic slug: ${slug}`);
   const raw = fs.readFileSync(path.join(TOPICS_DIR, slug, "manifest.json"), "utf8");

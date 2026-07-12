@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: nodeledge
+      POSTGRES_PASSWORD: nodeledge
+      POSTGRES_DB: nodeledge
+    volumes:
+      - nodeledge-pg:/var/lib/postgresql/data
+
+volumes:
+  nodeledge-pg:
