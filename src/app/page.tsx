@@ -1,7 +1,19 @@
-import GraphBoard from "@/components/GraphBoard";
-import { loadManifest } from "@/lib/topic";
+import Atlas from "@/components/Atlas";
+import { requireUser } from "@/lib/session";
+import { listTopics } from "@/lib/topics";
 
-export default function Home() {
-  const manifest = loadManifest("quantum-mechanics");
-  return <GraphBoard manifest={manifest} />;
+export default async function Home() {
+  const user = await requireUser();
+  const topics = await listTopics(user.id);
+  return (
+    <Atlas
+      userName={user.name}
+      topics={topics.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        createdAt: t.createdAt.toISOString().slice(0, 10),
+      }))}
+    />
+  );
 }
