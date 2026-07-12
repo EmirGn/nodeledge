@@ -1,0 +1,114 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#3b82f6;--good:#16a34a;--bad:#dc2626;--line:#d7dce3;--metal:#c3cad4}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#60a5fa;--good:#4ade80;--bad:#f87171;--line:#2a313b;--metal:#3a434f}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;position:relative}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px}
+.row+.row{margin-top:6px}
+label{font-size:12.5px;color:var(--muted);min-width:74px}
+input[type=range]{flex:1;min-width:110px}
+#f{accent-color:var(--accent)}#i{accent-color:var(--good)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:66px;text-align:right}
+.eq{margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums;padding:7px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--line)}
+.eq b{color:var(--accent)}
+.status{font-weight:600}
+.on{color:var(--good)}.off{color:var(--bad)}
+</style>
+<div class="wrap">
+  <div><h1>Photoelectric Effect</h1>
+  <div class="cap">Turn brightness (intensity) all the way up while frequency is low — nothing ejects. Raise frequency past the threshold and even dim light ejects electrons instantly. Color is the gatekeeper, not brightness.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="f">Frequency (color)</label><input id="f" type="range" min="30" max="130" step="1" value="55"><span class="val" id="fv"></span></div>
+    <div class="row"><label for="i">Intensity</label><input id="i" type="range" min="1" max="10" step="1" value="5"><span class="val" id="iv"></span></div>
+    <div class="eq" id="eq"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const F=document.getElementById('f'),I=document.getElementById('i'),FV=document.getElementById('fv'),IV=document.getElementById('iv'),EQ=document.getElementById('eq');
+const PHI=4.5; // work function (eV, arbitrary display scale)
+const H=0.075; // scale so hf-phi is nice: hf = H*f
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H2=0,dpr=1;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H2=r.height;}
+// wavelength->rgb for the beam color
+function freqColor(f){
+  // map f(30..130) to visible: low f = red, high = violet/UV
+  const t=(f-30)/100;let r,g,b;
+  if(t<0.25){r=230;g=60+t*400;b=40;}
+  else if(t<0.5){r=230-(t-0.25)*600;g=200;b=60;}
+  else if(t<0.75){r=60;g=200-(t-0.5)*400;b=120+(t-0.5)*400;}
+  else{r=120+(t-0.75)*300;g=60;b=230;}
+  const cl=v=>Math.max(0,Math.min(255,v|0));return `rgb(${cl(r)},${cl(g)},${cl(b)})`;
+}
+let electrons=[],photons=[],raf=null,last=0;
+function ejects(){return H*(+F.value)>PHI;}
+function Ek(){return Math.max(0,H*(+F.value)-PHI);}
+function spawnPhoton(){
+  const col=freqColor(+F.value);
+  photons.push({x:0,y:H2*0.35+Math.random()*H2*0.3,col});
+}
+function step(dt){
+  const plateX=W*0.62;const intensity=+I.value;
+  // photon emission rate scales with intensity
+  if(Math.random()<intensity*dt*3) spawnPhoton();
+  photons.forEach(p=>{p.x+=W*0.9*dt;});
+  photons=photons.filter(p=>{
+    if(p.x>=plateX){
+      if(ejects()) electrons.push({x:plateX,y:p.y,vx:-(60+Ek()*90)/1,vy:(Math.random()-0.5)*40,life:1});
+      return false;
+    }
+    return true;
+  });
+  electrons.forEach(e=>{e.x+=e.vx*dt;e.y+=e.vy*dt;e.life-=dt*0.5;});
+  electrons=electrons.filter(e=>e.life>0&&e.x>-20);
+}
+function draw(){
+  ctx.clearRect(0,0,W,H2);
+  const plateX=W*0.62;
+  // metal plate
+  ctx.fillStyle=css('--metal');ctx.fillRect(plateX,0,W-plateX,H2);
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';
+  ctx.fillText('metal',plateX+(W-plateX)/2,H2-10);
+  // beam guide
+  // photons
+  photons.forEach(p=>{ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,3.2,0,7);ctx.fill();
+    ctx.globalAlpha=.4;ctx.fillRect(p.x-10,p.y-1,10,2);ctx.globalAlpha=1;});
+  // electrons
+  electrons.forEach(e=>{ctx.globalAlpha=Math.max(0,e.life);ctx.fillStyle=css('--good');ctx.beginPath();ctx.arc(e.x,e.y,4,0,7);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='9px system-ui';ctx.fillText('e',e.x,e.y+3);ctx.globalAlpha=1;});
+  // threshold badge
+  const ej=ejects();
+  ctx.textAlign='left';ctx.font='600 12px system-ui';
+  ctx.fillStyle=ej?css('--good'):css('--bad');
+  ctx.fillText(ej?'● ejecting electrons':'● no ejection (below threshold)',12,20);
+}
+let acc=0;
+function loop(ts){
+  const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;
+  step(dt);draw();
+  raf=requestAnimationFrame(loop);
+}
+function upd(){
+  const hf=(H*(+F.value)).toFixed(2);
+  FV.textContent=(+F.value/10).toFixed(1)+'×10¹⁴';
+  IV.textContent=(+I.value);
+  const ek=Ek().toFixed(2);const ej=ejects();
+  EQ.innerHTML=`E_k = h·f − φ = <b>${hf}</b> − ${PHI.toFixed(1)} = <span class="status ${ej?'on':'off'}">${ej?('+'+ek+' eV → ejected'):('−'+(PHI-H*(+F.value)).toFixed(2)+' eV → stays put')}</span> &nbsp; <span style="color:var(--muted)">(intensity only sets how many)</span>`;
+}
+F.addEventListener('input',upd);I.addEventListener('input',upd);
+addEventListener('resize',()=>{fit();});
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}
+  else{last=performance.now();raf=requestAnimationFrame(loop);}
+});
+fit();upd();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

@@ -1,0 +1,80 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#0d9488;--psi:#2563eb;--line:#d7dce3;--wall:#c3cad4;--grid:#e8ecf1;--zp:#ea580c}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#2dd4bf;--psi:#60a5fa;--line:#2a313b;--wall:#3a434f;--grid:#1e252e;--zp:#fb923c}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:78px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:120px;text-align:right}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--muted);padding:7px 10px;font:600 12px system-ui;cursor:pointer}
+.seg button.act{background:var(--psi);color:#fff}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>Particle in a Box</h1>
+  <div class="cap">Only whole numbers of half-wavelengths fit between the walls. Shrink the box (L) and the energy rungs climb and spread apart. Note n=1 is never zero — the particle can't sit perfectly still (zero-point energy).</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><span class="small">Level:</span>
+      <span class="seg" id="ns"><button data-n="1" class="act">n=1</button><button data-n="2">n=2</button><button data-n="3">n=3</button><button data-n="4">n=4</button><button data-n="5">n=5</button></span></div>
+    <div class="row"><label for="L">Box width L</label><input id="L" type="range" min="0.5" max="1.5" step="0.01" value="1.1"><span class="val" id="lv"></span></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const NS=document.getElementById('ns'),L=document.getElementById('L'),LV=document.getElementById('lv');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,last=0,t=0,n=1;
+const Emax=100; // fixed axis (n=5 at L=0.5)
+function En(nn,l){return nn*nn/(l*l);}
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const l=+L.value;
+  const ladderW=Math.min(150,W*0.32);
+  // box occupies left; width scales with L
+  const boxMaxW=W-ladderW-40;const bw=boxMaxW*(l/1.5);
+  const bx0=16,bx1=bx0+bw,mid=H*0.52,amp=H*0.28;
+  // walls
+  ctx.fillStyle=css('--wall');ctx.fillRect(bx0-8,H*0.12,8,H*0.8);ctx.fillRect(bx1,H*0.12,8,H*0.8);
+  ctx.strokeStyle=css('--grid');ctx.beginPath();ctx.moveTo(bx0,mid);ctx.lineTo(bx1,mid);ctx.stroke();
+  // standing wave psi_n with time oscillation
+  const timef=Math.cos(t*En(n,l)*0.05);
+  ctx.strokeStyle=css('--psi');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let px=bx0;px<=bx1;px++){const u=(px-bx0)/bw;const val=Math.sin(n*Math.PI*u)*timef;const y=mid-val*amp;if(px===bx0)ctx.moveTo(px,y);else ctx.lineTo(px,y);}
+  ctx.stroke();
+  // |psi|^2 fill
+  ctx.fillStyle=css('--psi')+'22';ctx.beginPath();ctx.moveTo(bx0,mid);
+  for(let px=bx0;px<=bx1;px++){const u=(px-bx0)/bw;const val=Math.sin(n*Math.PI*u);const y=mid-val*val*amp*0.8;ctx.lineTo(px,y);}
+  ctx.lineTo(bx1,mid);ctx.closePath();ctx.fill();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';
+  ctx.fillText(n+' half-wavelength'+(n>1?'s':''),(bx0+bx1)/2,H*0.9+16);
+  // ladder
+  const lx=W-ladderW-6,top=H*0.14,bot=H*0.9;
+  ctx.textAlign='left';ctx.fillStyle=css('--muted');ctx.fillText('energy Eₙ = n²h²/8mL²',lx,H*0.12-2);
+  for(let nn=1;nn<=5;nn++){const e=En(nn,l);const y=bot-Math.min(e,Emax)/Emax*(bot-top);const on=nn===n;
+    ctx.strokeStyle=on?css('--psi'):css('--line');ctx.lineWidth=on?3:1.5;
+    ctx.beginPath();ctx.moveTo(lx,y);ctx.lineTo(lx+ladderW-10,y);ctx.stroke();
+    ctx.fillStyle=on?css('--psi'):css('--muted');ctx.font=(on?'600 ':'')+'11px system-ui';
+    ctx.fillText('E'+nn+'='+e.toFixed(1),lx+2,y-3);
+    if(nn===1){ctx.fillStyle=css('--zp');ctx.fillText('↑ zero-point (never 0)',lx+2,y+13);}
+  }
+  LV.textContent='L = '+l.toFixed(2)+'   E₁ = '+En(1,l).toFixed(1);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;t+=dt;draw();raf=requestAnimationFrame(loop);}
+NS.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;n=+b.dataset.n;[...NS.children].forEach(c=>c.classList.toggle('act',c===b));});
+L.addEventListener('input',draw);
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

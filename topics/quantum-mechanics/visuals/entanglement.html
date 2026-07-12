@@ -1,0 +1,100 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--a:#2563eb;--b:#db2777;--good:#16a34a;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--a:#60a5fa;--b:#f472b6;--good:#4ade80;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:120px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--b)}
+button.b{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:7px 13px;cursor:pointer;font:600 12.5px system-ui}
+button.b.primary{background:var(--a);color:#fff;border-color:var(--a)}
+button.b.act{background:var(--good);color:#fff;border-color:var(--good)}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>Quantum Entanglement</h1>
+  <div class="cap">Measure the pair. With both detectors on the same axis, the two results are ALWAYS opposite — yet each detector alone reads random noise. Rotate detector B and the perfect correlation loosens exactly as quantum theory predicts.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="d">Detector B angle Δ</label><input id="d" type="range" min="0" max="180" value="0"><span class="small" id="dv"></span></div>
+    <div class="row">
+      <button class="b primary" id="m1">measure pair ×1</button>
+      <button class="b" id="m50">×50</button>
+      <button class="b" id="auto">auto</button>
+      <button class="b" id="clr">reset</button>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const D=document.getElementById('d'),DV=document.getElementById('dv'),M1=document.getElementById('m1'),M50=document.getElementById('m50'),AUTO=document.getElementById('auto'),CLR=document.getElementById('clr');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,auto=false,t=0;
+let aUp=0,aDn=0,bUp=0,bDn=0,opp=0,same=0,total=0,lastA=null,lastB=null,pulse=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function measure(){
+  const dlt=(+D.value)*Math.PI/180;
+  const A=Math.random()<0.5?1:-1; // A random
+  const pOpp=Math.pow(Math.cos(dlt/2),2); // singlet: opposite prob
+  const B=(Math.random()<pOpp)?-A:A;
+  if(A>0)aUp++;else aDn++;if(B>0)bUp++;else bDn++;
+  if(A!==B)opp++;else same++;total++;
+  lastA=A;lastB=B;pulse=1;
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2,cy=H*0.34;
+  // source in middle
+  ctx.fillStyle=css('--good');ctx.globalAlpha=0.3+0.7*Math.max(0,1-pulse);ctx.beginPath();ctx.arc(cx,cy,7,0,7);ctx.fill();ctx.globalAlpha=1;
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('entangled source',cx,cy+22);
+  // link line
+  ctx.strokeStyle=css('--grid');ctx.lineWidth=2;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(W*0.16,cy);ctx.lineTo(W*0.84,cy);ctx.stroke();ctx.setLineDash([]);
+  // detectors
+  function det(x,label,val,col,ang){
+    ctx.save();ctx.translate(x,cy);
+    ctx.strokeStyle=col;ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,26,0,7);ctx.stroke();
+    // axis arrow
+    ctx.save();ctx.rotate(ang);ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(0,20);ctx.lineTo(0,-20);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(-4,-15);ctx.lineTo(0,-22);ctx.lineTo(4,-15);ctx.stroke();ctx.restore();
+    ctx.restore();
+    ctx.fillStyle=col;ctx.font='600 12px system-ui';ctx.textAlign='center';ctx.fillText(label,x,cy-38);
+    if(val!==null){ctx.fillStyle=col;ctx.font='700 22px system-ui';ctx.fillText(val>0?'↑':'↓',x,cy+70);}
+    ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.fillText('up '+(x<cx?aUp:bUp)+' / dn '+(x<cx?aDn:bDn),x,cy+92);
+  }
+  det(W*0.16,'Detector A',lastA,css('--a'),0);
+  det(W*0.84,'Detector B',lastB,css('--b'),(+D.value)*Math.PI/180);
+  // correlation panel
+  const py=H*0.66;
+  ctx.fillStyle=css('--fg');ctx.font='600 12px system-ui';ctx.textAlign='center';
+  const oppFrac=total?opp/total:0;
+  ctx.fillText('Opposite results: '+opp+' / '+total+' = '+(oppFrac*100).toFixed(0)+'%   (theory cos²(Δ/2) = '+(Math.pow(Math.cos((+D.value)*Math.PI/360),2)*100).toFixed(0)+'%)',cx,py);
+  // bar
+  const bw=Math.min(W*0.7,420),bx=cx-bw/2,by=py+16,bh=18;
+  ctx.fillStyle=css('--grid');ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle=css('--good');ctx.fillRect(bx,by,bw*oppFrac,bh);
+  const theoryX=bx+bw*Math.pow(Math.cos((+D.value)*Math.PI/360),2);
+  ctx.strokeStyle=css('--fg');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(theoryX,by-3);ctx.lineTo(theoryX,by+bh+3);ctx.stroke();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';
+  ctx.fillText('Each detector alone ≈ 50/50 random — no signal. The correlation only appears when you compare notes.',cx,by+bh+20);
+}
+function loop(ts){if(!loop.l)loop.l=ts;const dt=Math.min(0.05,(ts-loop.l)/1000);loop.l=ts;
+  if(auto&&Math.random()<0.5)measure();
+  if(pulse>0)pulse=Math.max(0,pulse-dt*2);
+  draw();raf=requestAnimationFrame(loop);}
+function upd(){DV.textContent='Δ = '+D.value+'° between A and B axes';}
+D.addEventListener('input',()=>{upd();});
+M1.onclick=measure;M50.onclick=()=>{for(let i=0;i<50;i++)measure();};
+AUTO.onclick=()=>{auto=!auto;AUTO.classList.toggle('act',auto);AUTO.textContent=auto?'stop':'auto';};
+CLR.onclick=()=>{aUp=aDn=bUp=bDn=opp=same=total=0;lastA=lastB=null;};
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{loop.l=0;raf=requestAnimationFrame(loop);}});
+fit();upd();raf=requestAnimationFrame(loop);
+</script>

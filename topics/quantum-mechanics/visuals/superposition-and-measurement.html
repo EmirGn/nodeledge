@@ -1,0 +1,93 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--up:#2563eb;--down:#db2777;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--up:#60a5fa;--down:#f472b6;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--up)}
+button.b{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:7px 13px;cursor:pointer;font:600 12.5px system-ui}
+button.b.primary{background:var(--up);color:#fff;border-color:var(--up)}
+button.b.act{background:var(--down);color:#fff;border-color:var(--down)}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>Superposition &amp; Measurement</h1>
+  <div class="cap">Set the blend of |up⟩ and |down⟩ — before measuring, both coexist. Hit "measure" and it snaps to ONE outcome at random. Measure many times: the tally converges on |a|² and |b|².</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row"><label for="th">Amplitude mix</label><input id="th" type="range" min="0" max="180" value="60"><span class="small" id="amp"></span></div>
+    <div class="row">
+      <button class="b primary" id="m1">measure ×1</button>
+      <button class="b" id="m50">measure ×50</button>
+      <button class="b" id="auto">auto</button>
+      <button class="b" id="clr">reset tally</button>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const TH=document.getElementById('th'),AMP=document.getElementById('amp'),M1=document.getElementById('m1'),M50=document.getElementById('m50'),AUTO=document.getElementById('auto'),CLR=document.getElementById('clr');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,nu=0,nd=0,auto=false,flash=null,t=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function pUp(){const th=(+TH.value)*Math.PI/180;return Math.pow(Math.cos(th/2),2);}
+function measure(){const p=pUp();const up=Math.random()<p;if(up)nu++;else nd++;flash={up,t:0};}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const p=pUp(),a=Math.sqrt(p),b=Math.sqrt(1-p);
+  const leftW=W*0.42;
+  // ---- left: superposition state (two coexisting disks) ----
+  const cx=leftW/2,cy=H*0.5,R=Math.min(leftW,H)*0.30;
+  ctx.fillStyle=css('--muted');ctx.font='600 12px system-ui';ctx.textAlign='center';
+  ctx.fillText('the qubit (superposition)',cx,H*0.12);
+  // up disk (top), down disk (bottom), opacity ~ amplitude
+  ctx.globalAlpha=0.25+0.65*p;ctx.fillStyle=css('--up');ctx.beginPath();ctx.arc(cx,cy-R*0.7,R*0.55,0,7);ctx.fill();
+  ctx.globalAlpha=0.25+0.65*(1-p);ctx.fillStyle=css('--down');ctx.beginPath();ctx.arc(cx,cy+R*0.7,R*0.55,0,7);ctx.fill();
+  ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='600 13px system-ui';
+  ctx.fillText('↑',cx,cy-R*0.7+5);ctx.fillText('↓',cx,cy+R*0.7+5);
+  // collapse flash
+  if(flash){const f=1-flash.t;ctx.globalAlpha=Math.max(0,f);ctx.strokeStyle=flash.up?css('--up'):css('--down');ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(cx,flash.up?cy-R*0.7:cy+R*0.7,R*0.55+8*flash.t*4,0,7);ctx.stroke();ctx.globalAlpha=1;}
+  ctx.fillStyle=css('--fg');ctx.font='13px system-ui';
+  ctx.fillText('|ψ⟩ = a|↑⟩ + b|↓⟩',cx,H*0.9);
+  // ---- right: tally bars ----
+  const rx=leftW+20,rw=W-leftW-40;const total=nu+nd;
+  const upFrac=total?nu/total:0,dnFrac=total?nd/total:0;
+  const bx=rx+10,by=H*0.2,bh=H*0.5,bw=rw*0.32;
+  ctx.fillStyle=css('--muted');ctx.font='600 12px system-ui';ctx.textAlign='left';ctx.fillText('measured outcomes',rx,H*0.12);
+  // theory markers
+  function bar(x,frac,theory,col,lbl,cnt){
+    ctx.fillStyle=css('--grid');ctx.fillRect(x,by,bw,bh);
+    ctx.fillStyle=col;ctx.fillRect(x,by+bh*(1-frac),bw,bh*frac);
+    // theory line
+    ctx.strokeStyle=css('--fg');ctx.setLineDash([4,3]);ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x-3,by+bh*(1-theory));ctx.lineTo(x+bw+3,by+bh*(1-theory));ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col;ctx.textAlign='center';ctx.font='600 12px system-ui';ctx.fillText(lbl,x+bw/2,by+bh+18);
+    ctx.fillStyle=css('--fg');ctx.font='11px system-ui';ctx.fillText(cnt+' ('+(frac*100).toFixed(0)+'%)',x+bw/2,by+bh+34);
+  }
+  bar(bx,upFrac,p,css('--up'),'↑ up',nu);
+  bar(bx+bw+rw*0.12,dnFrac,1-p,css('--down'),'↓ down',nd);
+  ctx.fillStyle=css('--muted');ctx.font='10px system-ui';ctx.textAlign='left';ctx.fillText('- - -  theory |a|², |b|²',rx,H*0.16);
+  ctx.fillText('total: '+total,rx,H*0.86);
+}
+function loop(ts){if(!loop.l)loop.l=ts;const dt=Math.min(0.05,(ts-loop.l)/1000);loop.l=ts;
+  if(auto){if(Math.random()<0.4)measure();}
+  if(flash){flash.t+=dt*3;if(flash.t>=1)flash=null;}
+  draw();raf=requestAnimationFrame(loop);}
+function upd(){const p=pUp();AMP.innerHTML='a=<b>'+Math.sqrt(p).toFixed(2)+'</b>, b=<b>'+Math.sqrt(1-p).toFixed(2)+'</b> &nbsp; |a|²='+(p*100).toFixed(0)+'%, |b|²='+((1-p)*100).toFixed(0)+'%';}
+TH.addEventListener('input',()=>{upd();});
+M1.onclick=measure;M50.onclick=()=>{for(let i=0;i<50;i++)measure();};
+AUTO.onclick=()=>{auto=!auto;AUTO.classList.toggle('act',auto);AUTO.textContent=auto?'stop':'auto';};
+CLR.onclick=()=>{nu=nd=0;};
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{loop.l=0;raf=requestAnimationFrame(loop);}});
+fit();upd();raf=requestAnimationFrame(loop);
+</script>

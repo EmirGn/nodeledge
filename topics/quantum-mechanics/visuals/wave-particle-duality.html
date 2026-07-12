@@ -1,0 +1,103 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--accent:#7c3aed;--accent2:#0ea5e9;--line:#d7dce3;--dot:#f59e0b}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--accent:#a78bfa;--accent2:#38bdf8;--line:#2a313b;--dot:#fbbf24}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--muted);padding:7px 12px;font:600 12.5px system-ui;cursor:pointer}
+.seg button.act{background:var(--accent);color:#fff}
+label{font-size:12.5px;color:var(--muted);min-width:96px}
+input[type=range]{flex:1;min-width:110px;accent-color:var(--accent2)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:96px;text-align:right}
+.small{font-size:11.5px;color:var(--muted)}
+button.mini{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:6px 10px;cursor:pointer;font:12px system-ui}
+</style>
+<div class="wrap">
+  <div><h1>Wave–Particle Duality</h1>
+  <div class="cap">Same light source, same photons. Flip your <b>question</b> and watch the answer change: ask "where did each one land?" (particle) or "what pattern do many build?" (wave). You changed the question, not the light.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row">
+      <span class="seg"><button id="bp" class="act">Particle question</button><button id="bw">Wave question</button></span>
+      <button class="mini" id="reset">clear screen</button>
+      <span class="small" id="count">0 photons detected</span>
+    </div>
+    <div class="row">
+      <label for="wl">Wavelength λ</label><input id="wl" type="range" min="20" max="80" value="45">
+      <span class="val" id="wlv"></span>
+    </div>
+    <div class="small" id="bridge"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const bp=document.getElementById('bp'),bw=document.getElementById('bw'),reset=document.getElementById('reset');
+const WL=document.getElementById('wl'),WLV=document.getElementById('wlv'),CT=document.getElementById('count'),BR=document.getElementById('bridge');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,mode='p',hits=[],flying=[],n=0,raf=null,last=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function gauss(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+// sample landing y-fraction (0..1) given mode & wavelength
+function sampleY(){
+  const c=0.5+gauss()*0.16; // gaussian envelope
+  if(mode==='p') return Math.max(0.03,Math.min(0.97,c));
+  // wave: rejection sample interference fringes cos^2, spacing set by wavelength
+  const spacing=(+WL.value)/900; // fraction period
+  for(let k=0;k<40;k++){
+    const y=0.5+gauss()*0.22;
+    const env=Math.exp(-Math.pow((y-0.5)/0.22,2)/2);
+    const fr=Math.pow(Math.cos((y-0.5)/spacing*Math.PI),2);
+    if(Math.random()<fr*env) return Math.max(0.03,Math.min(0.97,y));
+  }
+  return c;
+}
+function emit(){
+  const y0=0.5+gauss()*0.05;
+  flying.push({t:0,y0:y0,ty:sampleY()});
+}
+function step(dt){
+  if(Math.random()<dt*9) emit();
+  flying.forEach(f=>f.t+=dt*1.6);
+  flying=flying.filter(f=>{
+    if(f.t>=1){hits.push({x:0,y:f.ty});n++;return false;}
+    return true;
+  });
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const srcX=W*0.06, screenX=W*0.80;
+  // source
+  ctx.fillStyle=css('--accent');ctx.beginPath();ctx.arc(srcX,H*0.5,6,0,7);ctx.fill();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('source',srcX,H*0.5+22);
+  // screen line
+  ctx.strokeStyle=css('--line');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(screenX,H*0.04);ctx.lineTo(screenX,H*0.96);ctx.stroke();
+  ctx.fillText('screen',screenX,H*0.5+ (0));
+  // accumulated hits
+  ctx.fillStyle=css('--dot');
+  for(const h of hits){const y=H*0.04+h.y*H*0.92;ctx.globalAlpha=.75;ctx.beginPath();ctx.arc(screenX+2,y,2.2,0,7);ctx.fill();}
+  ctx.globalAlpha=1;
+  // flying photons
+  flying.forEach(f=>{const x=srcX+(screenX-srcX)*f.t;const y=H*0.5+(H*0.04+f.ty*H*0.92-H*0.5)*f.t;
+    ctx.fillStyle=css('--accent2');ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();});
+  // label current answer
+  ctx.textAlign='left';ctx.font='600 12px system-ui';ctx.fillStyle=css('--fg');
+  ctx.fillText(mode==='p'?'Particle answer: discrete single-spot clicks':'Wave answer: interference fringes emerge',12,20);
+}
+function loop(ts){const dt=Math.min(0.05,(ts-last)/1000||0);last=ts;step(dt);draw();CT.textContent=n+' photons detected';raf=requestAnimationFrame(loop);}
+function setMode(m){mode=m;bp.classList.toggle('act',m==='p');bw.classList.toggle('act',m==='w');hits=[];n=0;upd();}
+bp.onclick=()=>setMode('p');bw.onclick=()=>setMode('w');reset.onclick=()=>{hits=[];n=0;};
+function upd(){WLV.textContent='λ = '+WL.value+' nm';BR.innerHTML='Bridge equation <b>p = h / λ</b>: shorter λ ⇒ larger momentum, and (wave mode) tighter fringes.';}
+WL.addEventListener('input',()=>{if(mode==='w'){hits=[];n=0;}upd();});
+addEventListener('resize',fit);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{last=performance.now();raf=requestAnimationFrame(loop);}});
+fit();upd();last=performance.now();raf=requestAnimationFrame(loop);
+</script>

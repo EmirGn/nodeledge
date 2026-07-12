@@ -1,0 +1,87 @@
+<style>
+:root{--bg:#f5f7fa;--panel:#fff;--fg:#161a20;--muted:#5a6472;--psi:#2563eb;--prob:#059669;--dot:#f59e0b;--line:#d7dce3;--grid:#e8ecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#171c23;--fg:#e7ebf1;--muted:#9aa4b2;--psi:#60a5fa;--prob:#34d399;--dot:#fbbf24;--line:#2a313b;--grid:#1e252e}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+.wrap{display:flex;flex-direction:column;height:100%;padding:12px;gap:8px}
+h1{font-size:15px;font-weight:600}
+.cap{font-size:12.5px;color:var(--muted)}
+.stage{flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+canvas{width:100%;height:100%;display:block;border-radius:10px}
+.ctrl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+button.b{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:7px 12px;cursor:pointer;font:600 12.5px system-ui}
+button.b.primary{background:var(--prob);color:#fff;border-color:var(--prob)}
+button.b.act{background:var(--psi);color:#fff;border-color:var(--psi)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--muted);padding:7px 11px;font:600 12.5px system-ui;cursor:pointer}
+.seg button.act{background:var(--psi);color:#fff}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <div><h1>The Wavefunction &amp; the Born Rule</h1>
+  <div class="cap">Press "measure" over and over. Each click finds ONE point-like particle; where it lands is dealt from P(x) = |ψ(x)|². The dots slowly rebuild the probability cloud — and never appear where ψ = 0.</div></div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <div class="ctrl">
+    <div class="row">
+      <span class="small">State:</span>
+      <span class="seg" id="states"><button data-n="1" class="act">n=1</button><button data-n="2">n=2</button><button data-n="3">n=3</button></span>
+      <button class="b primary" id="m1">measure ×1</button>
+      <button class="b" id="m50">measure ×50</button>
+      <button class="b" id="auto">auto</button>
+      <button class="b" id="clr">clear</button>
+      <span class="small" id="cnt">0 measurements</span>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const states=document.getElementById('states'),M1=document.getElementById('m1'),M50=document.getElementById('m50'),AUTO=document.getElementById('auto'),CLR=document.getElementById('clr'),CNT=document.getElementById('cnt');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let W=0,H=0,dpr=1,raf=null,n=1,hits=[],auto=false,count=0;
+function fit(){const r=cv.parentNode.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);cv.width=r.width*dpr;cv.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);W=r.width;H=r.height;}
+function psi(u){return Math.sin(n*Math.PI*u);} // u in 0..1
+function prob(u){const p=psi(u);return p*p;}
+function measure(){
+  for(let k=0;k<200;k++){const u=Math.random();if(Math.random()<prob(u)){hits.push(u);count++;return;}}
+  count++;
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const pad=12,pw=W-2*pad;const gap=8;const ph=(H-2*pad-gap)/2;
+  const x0=pad;
+  // TOP: psi(x) signed
+  const ty=pad, tmid=ty+ph/2, amp=ph*0.4;
+  ctx.strokeStyle=css('--grid');ctx.beginPath();ctx.moveTo(x0,tmid);ctx.lineTo(x0+pw,tmid);ctx.stroke();
+  ctx.fillStyle=css('--muted');ctx.font='11px system-ui';ctx.textAlign='left';ctx.fillText('ψ(x) — the wave of possibility (can be negative)',x0+4,ty+13);
+  ctx.strokeStyle=css('--psi');ctx.lineWidth=2.4;ctx.beginPath();
+  for(let i=0;i<=pw;i++){const u=i/pw;const y=tmid-psi(u)*amp;if(i===0)ctx.moveTo(x0+i,y);else ctx.lineTo(x0+i,y);}
+  ctx.stroke();
+  // BOTTOM: |psi|^2 + dots
+  const by=ty+ph+gap, base=by+ph;
+  ctx.fillStyle=css('--muted');ctx.fillText('P(x) = |ψ(x)|² — probability cloud (dots = measurements)',x0+4,by+13);
+  ctx.strokeStyle=css('--prob');ctx.lineWidth=2;ctx.fillStyle=css('--prob')+'22';
+  ctx.beginPath();ctx.moveTo(x0,base);
+  for(let i=0;i<=pw;i++){const u=i/pw;const y=base-prob(u)*ph*0.9;ctx.lineTo(x0+i,y);}
+  ctx.lineTo(x0+pw,base);ctx.closePath();ctx.fill();
+  ctx.beginPath();for(let i=0;i<=pw;i++){const u=i/pw;const y=base-prob(u)*ph*0.9;if(i===0)ctx.moveTo(x0+i,y);else ctx.lineTo(x0+i,y);}ctx.stroke();
+  // dots: place along a band near base, jittered vertically
+  ctx.fillStyle=css('--dot');
+  for(const u of hits){const x=x0+u*pw;const jitter=(Math.sin(u*99991)*0.5+0.5);const y=base-4-jitter*(ph*0.6);ctx.globalAlpha=.7;ctx.beginPath();ctx.arc(x,y,2,0,7);ctx.fill();}
+  ctx.globalAlpha=1;
+  // node markers
+  ctx.fillStyle=css('--muted');ctx.font='10px system-ui';ctx.textAlign='center';
+  for(let k=1;k<n;k++){const u=k/n;ctx.fillText('node (ψ=0)',x0+u*pw,base+ (0)); }
+  CNT.textContent=count+' measurements';
+}
+function loop(){if(auto){for(let i=0;i<3;i++)measure();}draw();raf=requestAnimationFrame(loop);}
+states.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;n=+b.dataset.n;[...states.children].forEach(c=>c.classList.toggle('act',c===b));hits=[];count=0;});
+M1.onclick=()=>measure();
+M50.onclick=()=>{for(let i=0;i<50;i++)measure();};
+AUTO.onclick=()=>{auto=!auto;AUTO.classList.toggle('act',auto);AUTO.textContent=auto?'stop':'auto';};
+CLR.onclick=()=>{hits=[];count=0;};
+addEventListener('resize',()=>{fit();draw();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf),raf=null;}else{raf=requestAnimationFrame(loop);}});
+fit();raf=requestAnimationFrame(loop);
+</script>
