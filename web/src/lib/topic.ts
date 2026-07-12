@@ -29,8 +29,12 @@ export type Manifest = {
   edges: ManifestEdge[];
 };
 
-// Packages live outside web/ so topics stay portable (see FORMAT.md).
-const TOPICS_DIR = path.resolve(process.cwd(), "..", "topics");
+// Packages live at ./topics when the app is the repo root (standalone deploy),
+// or one level up in the monorepo layout (see FORMAT.md).
+const LOCAL_TOPICS = path.resolve(process.cwd(), "topics");
+const TOPICS_DIR = fs.existsSync(LOCAL_TOPICS)
+  ? LOCAL_TOPICS
+  : path.resolve(process.cwd(), "..", "topics");
 
 const SAFE_ID = /^[a-z0-9-]+$/;
 
