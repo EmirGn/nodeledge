@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import GraphBoard from "@/components/GraphBoard";
+import GraphBoard, { type ChartingPhase } from "@/components/GraphBoard";
 import { authClient } from "@/lib/auth-client";
 import type { ManifestEdge, ManifestNode } from "@/lib/topic";
 
@@ -14,15 +14,19 @@ type TopicRow = {
   createdAt: string;
 };
 
-// The graph being drawn live while /api/topics streams it in.
+// The graph being drawn live while /api/topics streams it in. `acked` flips
+// when the route confirms the model stream is open — the waiting HUD stages
+// itself on that, the title, and the first node.
 type LiveGraph = {
+  acked: boolean;
   title: string | null;
   nodes: ManifestNode[];
   edges: ManifestEdge[];
 };
 
 type StreamEvent =
-  | { type: "meta"; title: string; description: string }
+  | { type: "status" }
+  | { type: "meta"; title: string }
   | { type: "node"; node: ManifestNode }
   | { type: "edge"; edge: ManifestEdge }
   | { type: "done"; id: string }
@@ -43,6 +47,9 @@ export default function Atlas({
 
   const apply = (ev: StreamEvent): boolean => {
     switch (ev.type) {
+      case "status":
+        setLive((l) => l && { ...l, acked: true });
+        return false;
       case "meta":
         setLive((l) => l && { ...l, title: ev.title });
         return false;
@@ -69,7 +76,7 @@ export default function Atlas({
     if (!p || live) return;
     setError(null);
     // Switch to the board immediately; nodes light up as the model draws them.
-    setLive({ title: null, nodes: [], edges: [] });
+    setLive({ acked: false, title: null, nodes: [], edges: [] });
     try {
       const res = await fetch("/api/topics", {
         method: "POST",
@@ -115,9 +122,16 @@ export default function Atlas({
   };
 
   if (live) {
+    const phase: ChartingPhase = live.nodes.length
+      ? "drawing"
+      : live.title
+        ? "resolving"
+        : live.acked
+          ? "surveying"
+          : "contacting";
     return (
       <GraphBoard
-        charting
+        charting={phase}
         topicId=""
         initialKnown={[]}
         manifest={{

@@ -73,7 +73,7 @@ Rules:
 - Accuracy is non-negotiable: this teaches real subjects. Never invent concepts or dependencies that experts would dispute.`;
 
 export type GraphStreamEvent =
-  | { type: "meta"; title: string; description: string }
+  | { type: "meta"; title: string }
   | { type: "node"; node: ManifestNode }
   | { type: "edge"; edge: ManifestEdge };
 
@@ -96,9 +96,11 @@ export async function* streamTopicGraph(
   })) {
     buf += delta;
     const part = scanPartialGraph(buf);
-    if (!sentMeta && part.title !== undefined && part.description !== undefined) {
+    // Title alone is enough for meta — waiting for the description too would
+    // hold the client's first signal hostage to another sentence of tokens.
+    if (!sentMeta && part.title !== undefined) {
       sentMeta = true;
-      yield { type: "meta", title: part.title, description: part.description };
+      yield { type: "meta", title: part.title };
     }
     for (; sentNodes < part.nodes.length; sentNodes++) {
       yield { type: "node", node: part.nodes[sentNodes] };
