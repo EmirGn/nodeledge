@@ -74,6 +74,16 @@ body {
   user-select: none;
 }
 
+/* Floats over the entry column until the learner marks something known. */
+.entry-caption {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
 /* Each knownode brightens into existence — matters most while a graph is
    streaming in node by node. Ends on the element's own opacity attribute. */
 @keyframes node-in {

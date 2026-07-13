@@ -8,27 +8,37 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { Manifest } from "@/lib/topic";
+import type { Manifest, ManifestEdge, ManifestNode } from "@/lib/topic";
 
 type Vec = { x: number; y: number; vx: number; vy: number };
+type Seat = { x: number; y: number };
+type Cam = { k: number; x: number; y: number };
 type NodeStatus = "known" | "open" | "locked";
 
 // What render reads: an immutable snapshot the simulation publishes each
 // frame — the mutable Vec map stays inside the loop, out of render.
 type View = {
   positions: ReadonlyMap<string, { x: number; y: number }>;
-  running: boolean;
+  cam: Cam;
   dragging: boolean;
 };
 
-const PAD_X = 120;
-const PAD_TOP = 140;
-const PAD_BOTTOM = 100;
-const ALPHA_MIN = 0.004;
-// Minimum pair spacing — an ellipse, wider than tall, because each node
-// carries a text label underneath that needs horizontal clearance.
-const SEP_X = 108;
-const SEP_Y = 60;
+// Anchored constellation: a deterministic layered layout decides where every
+// knownode belongs (its seat); springs decide how it behaves. Drag a node and
+// the disturbance travels through its edges — prerequisites tug along — then
+// the map settles back into shape. Layout carries the meaning, physics
+// carries the feel; no arrangement the user makes can outlive letting go.
+const COL_GAP = 250; // world px between prerequisite layers
+const ROW_GAP = 92; // vertical clearance inside a layer (labels need room)
+const SWEEPS = 14; // barycenter ordering iterations
+const RELATED_W = 0.3; // pull of related edges on row ordering
+const HOME_K = 0.028; // spring toward the seat
+const EDGE_K = { prerequisite: 0.016, related: 0.006 } as const;
+const DAMPING = 0.86;
+const BREATHE = 1.4; // sub-pixel drift amplitude at rest
+const FLICK_MAX = 40; // velocity cap when a drag releases mid-throw
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2.5;
 
 // Theme lives outside React: the <html> data-theme attribute (stamped by the
 // pre-hydration script or the toggle), falling back to the OS preference.
@@ -52,6 +62,152 @@ function readTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: light)").matches
     ? "light"
     : "dark";
+}
+
+// Column = longest prerequisite path from any entry point. More robust than
+// the model-provided level field, and it keeps streamed-in nodes honest: a
+// node parks at column 0 until its prerequisite edge arrives, then glides
+// right on its spring.
+function computeDepth(
+  nodes: ManifestNode[],
+  prereqOf: Map<string, string[]>,
+): Map<string, number> {
+  const m = new Map<string, number>();
+  const visiting = new Set<string>();
+  const d = (id: string): number => {
+    const have = m.get(id);
+    if (have !== undefined) return have;
+    if (visiting.has(id)) return 0; // cycle guard; sanitizeGraph forbids these
+    visiting.add(id);
+    const reqs = prereqOf.get(id) ?? [];
+    const v = reqs.length ? Math.max(...reqs.map(d)) + 1 : 0;
+    m.set(id, v);
+    return v;
+  };
+  for (const n of nodes) d(n.id);
+  return m;
+}
+
+// Sugiyama-lite: nodes group into columns by prerequisite depth; rows within
+// a column are ordered by the weighted mean row of their neighbors
+// (barycenter sweeps), which removes most edge crossings. Deterministic: the
+// same graph always draws the same map.
+function layeredLayout(
+  nodes: ManifestNode[],
+  edges: ManifestEdge[],
+  depth: Map<string, number>,
+): Map<string, Seat> {
+  const ids = new Set(nodes.map((n) => n.id));
+  const cols = new Map<number, string[]>();
+  for (const n of nodes) {
+    const c = depth.get(n.id) ?? 0;
+    cols.set(c, [...(cols.get(c) ?? []), n.id]);
+  }
+  const colKeys = [...cols.keys()].sort((a, b) => a - b);
+
+  const nb = new Map<string, { id: string; w: number }[]>();
+  for (const e of edges) {
+    if (!ids.has(e.source) || !ids.has(e.target)) continue;
+    const w = e.type === "prerequisite" ? 1 : RELATED_W;
+    nb.set(e.source, [...(nb.get(e.source) ?? []), { id: e.target, w }]);
+    nb.set(e.target, [...(nb.get(e.target) ?? []), { id: e.source, w }]);
+  }
+
+  const y = new Map<string, number>();
+  for (const c of colKeys) {
+    const col = cols.get(c)!;
+    col.forEach((id, i) => y.set(id, (i - (col.length - 1) / 2) * ROW_GAP));
+  }
+
+  for (let it = 0; it < SWEEPS; it++) {
+    const keys = it % 2 ? [...colKeys].reverse() : colKeys;
+    for (const c of keys) {
+      const col = cols.get(c)!;
+      const wish = new Map<string, number>();
+      for (const id of col) {
+        let sum = 0;
+        let wsum = 0;
+        for (const { id: m, w } of nb.get(id) ?? []) {
+          const my = y.get(m);
+          if (my === undefined) continue;
+          sum += my * w;
+          wsum += w;
+        }
+        wish.set(id, wsum ? sum / wsum : y.get(id)!);
+      }
+      col.sort((a, b) => wish.get(a)! - wish.get(b)! || a.localeCompare(b));
+      // place at wished rows, sweep down enforcing the gap, then re-center
+      // so the enforcement doesn't drift the column
+      const placed = col.map((id) => wish.get(id)!);
+      for (let i = 1; i < placed.length; i++) {
+        placed[i] = Math.max(placed[i], placed[i - 1] + ROW_GAP);
+      }
+      const off =
+        placed.reduce((s, v) => s + v, 0) / placed.length -
+        col.reduce((s, id) => s + wish.get(id)!, 0) / col.length;
+      col.forEach((id, i) => y.set(id, placed[i] - off));
+    }
+  }
+
+  const seats = new Map<string, Seat>();
+  for (const c of colKeys) {
+    for (const id of cols.get(c)!) {
+      seats.set(id, { x: c * COL_GAP, y: y.get(id)! });
+    }
+  }
+  return seats;
+}
+
+function fitCam(seats: Map<string, Seat>, w: number, h: number): Cam {
+  if (!seats.size || !w || !h) return { k: 1, x: 0, y: 0 };
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const s of seats.values()) {
+    minX = Math.min(minX, s.x);
+    maxX = Math.max(maxX, s.x);
+    minY = Math.min(minY, s.y);
+    maxY = Math.max(maxY, s.y);
+  }
+  const bw = Math.max(maxX - minX, 1) + 200; // label + glow margin
+  const bh = Math.max(maxY - minY, 1) + 170;
+  const k = Math.min((w - 120) / bw, (h - 200) / bh, 1.35);
+  return {
+    k,
+    x: w / 2 - ((minX + maxX) / 2) * k,
+    y: h / 2 - ((minY + maxY) / 2) * k + 14,
+  };
+}
+
+function norm(x: number, y: number) {
+  const l = Math.hypot(x, y) || 1;
+  return { x: x / l, y: y / l };
+}
+
+// Flow curve for a prerequisite edge: leaves the source horizontally and
+// arrives horizontally, shortened at both ends so the chevron sits clear of
+// the node dot. Brightness ramps toward the target — the direction of
+// learning made visible.
+function prereqGeometry(p: Seat, q: Seat, rS: number, rT: number) {
+  const dx = q.x - p.x;
+  const bend = Math.max(Math.abs(dx) * 0.45, 40) * (dx >= 0 ? 1 : -1);
+  const c1 = { x: p.x + bend, y: p.y };
+  const c2 = { x: q.x - bend, y: q.y };
+  const inD = norm(q.x - c2.x, q.y - c2.y);
+  const outD = norm(c1.x - p.x, c1.y - p.y);
+  const start = { x: p.x + outD.x * (rS + 4), y: p.y + outD.y * (rS + 4) };
+  const end = { x: q.x - inD.x * (rT + 7), y: q.y - inD.y * (rT + 7) };
+  const perp = { x: -inD.y, y: inD.x };
+  return {
+    d: `M${start.x},${start.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`,
+    start,
+    end,
+    chev:
+      `M${end.x},${end.y}` +
+      `L${end.x - inD.x * 6 + perp.x * 3.2},${end.y - inD.y * 6 + perp.y * 3.2}` +
+      `L${end.x - inD.x * 6 - perp.x * 3.2},${end.y - inD.y * 6 - perp.y * 3.2}Z`,
+  };
 }
 
 // Stages of a live generation, in order: waiting for the route to ack the
@@ -102,21 +258,36 @@ export default function GraphBoard({
     return m;
   }, [edges]);
 
-  const maxLevel = useMemo(
-    () => Math.max(1, ...nodes.map((n) => n.level)),
-    [nodes],
+  const depth = useMemo(
+    () => computeDepth(nodes, prereqOf),
+    [nodes, prereqOf],
+  );
+
+  const seats = useMemo(
+    () => layeredLayout(nodes, edges, depth),
+    [nodes, edges, depth],
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const posRef = useRef<Map<string, Vec>>(new Map());
-  const alphaRef = useRef(1);
-  const dragRef = useRef<{ id: string; moved: number } | null>(null);
+  const tgtRef = useRef<Map<string, Seat>>(new Map());
+  const restRef = useRef<Map<number, number>>(new Map());
+  const phaseRef = useRef<Map<string, number>>(new Map());
+  const camRef = useRef<Cam>({ k: 1, x: 0, y: 0 });
+  const camTgtRef = useRef<Cam>({ k: 1, x: 0, y: 0 });
+  const firstFitRef = useRef(true);
+  const dragRef = useRef<{
+    id: string;
+    moved: number;
+    lvx: number;
+    lvy: number;
+  } | null>(null);
 
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({
     positions: new Map(),
-    running: true,
+    cam: { k: 1, x: 0, y: 0 },
     dragging: false,
   });
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -169,38 +340,50 @@ export default function GraphBoard({
     return () => ro.disconnect();
   }, []);
 
-  // seed positions: x by prerequisite level, y spread deterministically.
-  // Runs whenever nodes change so streamed-in nodes get seats too; existing
-  // positions are never touched, and arrivals reheat the simulation.
+  // Apply the computed layout: seats become spring anchors, edge rest lengths
+  // are the seat distances (so springs are relaxed exactly at the layout),
+  // and new arrivals seed just left of their seat and glide in. Existing
+  // positions are never touched — the springs carry nodes to moved seats.
   useEffect(() => {
     if (!size.w || !size.h) return;
-    let added = false;
-    nodes.forEach((n, i) => {
-      if (posRef.current.has(n.id)) return;
-      posRef.current.set(n.id, {
-        x: PAD_X + (n.level / maxLevel) * (size.w - PAD_X * 2),
-        y: PAD_TOP + (((i * 0.618034) % 1) * (size.h - PAD_TOP - PAD_BOTTOM)),
-        vx: 0,
-        vy: 0,
-      });
-      added = true;
+    tgtRef.current = seats;
+    const rest = new Map<number, number>();
+    edges.forEach((e, i) => {
+      const a = seats.get(e.source);
+      const b = seats.get(e.target);
+      if (a && b) rest.set(i, Math.hypot(b.x - a.x, b.y - a.y));
     });
-    // Reheat; the simulation publishes the new seats on its next frame.
-    if (added) alphaRef.current = Math.max(alphaRef.current, 0.6);
-  }, [size, nodes, maxLevel]);
+    restRef.current = rest;
+    nodes.forEach((n, i) => {
+      // golden-angle phases so no two nodes breathe in sync
+      if (!phaseRef.current.has(n.id)) {
+        phaseRef.current.set(n.id, i * 2.39996);
+      }
+      if (!posRef.current.has(n.id)) {
+        const s = seats.get(n.id)!;
+        posRef.current.set(n.id, { x: s.x - 30, y: s.y, vx: 0, vy: 0 });
+      }
+    });
+    camTgtRef.current = fitCam(seats, size.w, size.h);
+    if (firstFitRef.current) {
+      firstFitRef.current = false;
+      camRef.current = { ...camTgtRef.current };
+    }
+  }, [seats, nodes, edges, size]);
 
-  // force simulation
+  // spring simulation
   useEffect(() => {
     if (!size.w || !size.h) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-      alphaRef.current = Math.min(alphaRef.current, 0.3); // settle fast, no long animation
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
 
-    const publish = (running: boolean) =>
+    const publish = () =>
       setView({
         positions: new Map(
           Array.from(posRef.current, ([id, v]) => [id, { x: v.x, y: v.y }]),
         ),
-        running,
+        cam: { ...camRef.current },
         dragging: Boolean(dragRef.current),
       });
 
@@ -208,96 +391,115 @@ export default function GraphBoard({
     let idle = false;
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      const a = alphaRef.current;
-      if (a <= ALPHA_MIN && !dragRef.current) {
-        if (!idle) {
-          idle = true;
-          publish(false);
+      const cam = camRef.current;
+      const ct = camTgtRef.current;
+      const camActive =
+        Math.abs(cam.k - ct.k) > 1e-4 ||
+        Math.abs(cam.x - ct.x) > 0.2 ||
+        Math.abs(cam.y - ct.y) > 0.2;
+      if (camActive) {
+        const ck = reduced ? 1 : 0.16;
+        cam.k += (ct.k - cam.k) * ck;
+        cam.x += (ct.x - cam.x) * ck;
+        cam.y += (ct.y - cam.y) * ck;
+      } else {
+        Object.assign(cam, ct);
+      }
+
+      // Reduced motion: no springs, no breathing — nodes sit at their seats,
+      // and the loop idles once everything is in place.
+      if (reduced) {
+        let moved = false;
+        for (const [id, p] of posRef.current) {
+          if (dragRef.current?.id === id) {
+            moved = true;
+            continue;
+          }
+          const s = tgtRef.current.get(id);
+          if (!s) continue;
+          if (p.x !== s.x || p.y !== s.y) {
+            p.x = s.x;
+            p.y = s.y;
+            moved = true;
+          }
+          p.vx = 0;
+          p.vy = 0;
         }
+        if (!camActive && !moved && !dragRef.current) {
+          if (!idle) {
+            idle = true;
+            publish();
+          }
+          return;
+        }
+        idle = false;
+        publish();
         return;
       }
-      idle = false;
 
-      const pts = nodes.map((n) => ({ n, p: posRef.current.get(n.id)! }));
-      for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-          const p = pts[i].p;
-          const q = pts[j].p;
-          let dx = p.x - q.x;
-          let dy = p.y - q.y;
-          const d2 = dx * dx + dy * dy || 1;
-          const d = Math.sqrt(d2);
-          const f = Math.min(26000 / d2, 5) * a;
-          dx /= d;
-          dy /= d;
-          p.vx += dx * f;
-          p.vy += dy * f;
-          q.vx -= dx * f;
-          q.vy -= dy * f;
-        }
-      }
-      for (const e of edges) {
+      const now = performance.now();
+      // disturbances travel through the edges
+      edges.forEach((e, i) => {
+        const rest = restRef.current.get(i);
         const p = posRef.current.get(e.source);
         const q = posRef.current.get(e.target);
-        if (!p || !q) continue;
-        const rest = e.type === "prerequisite" ? 210 : 270;
-        const k = e.type === "prerequisite" ? 0.04 : 0.01;
+        if (rest === undefined || !p || !q) return;
         const dx = q.x - p.x;
         const dy = q.y - p.y;
         const d = Math.hypot(dx, dy) || 1;
-        const f = (k * (d - rest) * a) / d;
+        const f = (EDGE_K[e.type] * (d - rest)) / d;
         p.vx += dx * f;
         p.vy += dy * f;
         q.vx -= dx * f;
         q.vy -= dy * f;
-      }
-      // firm spacing floor, resolved positionally (not via velocity) so
-      // overlaps untangle even as the simulation cools; a dragged node stays
-      // pinned and its neighbour takes the whole push
-      for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-          const p = pts[i].p;
-          const q = pts[j].p;
-          let dx = q.x - p.x;
-          const dy = q.y - p.y;
-          if (!dx && !dy) dx = 0.5;
-          const nd = Math.hypot(dx / SEP_X, dy / SEP_Y);
-          if (nd >= 1) continue;
-          const k = (1 / Math.max(nd, 0.2) - 1) * 0.35;
-          const iPinned = dragRef.current?.id === pts[i].n.id;
-          const jPinned = dragRef.current?.id === pts[j].n.id;
-          if (!iPinned) {
-            p.x -= dx * k * (jPinned ? 1 : 0.5);
-            p.y -= dy * k * (jPinned ? 1 : 0.5);
-          }
-          if (!jPinned) {
-            q.x += dx * k * (iPinned ? 1 : 0.5);
-            q.y += dy * k * (iPinned ? 1 : 0.5);
-          }
-        }
-      }
-      for (const { n, p } of pts) {
-        if (dragRef.current?.id === n.id) {
+      });
+      for (const [id, p] of posRef.current) {
+        if (dragRef.current?.id === id) {
           p.vx = 0;
           p.vy = 0;
-        } else {
-          const tx = PAD_X + (n.level / maxLevel) * (size.w - PAD_X * 2);
-          p.vx += (tx - p.x) * 0.08 * a;
-          p.vy += (size.h / 2 - p.y) * 0.006 * a;
-          p.vx *= 0.6;
-          p.vy *= 0.6;
-          p.x += p.vx;
-          p.y += p.vy;
+          continue;
         }
-        p.x = Math.min(Math.max(p.x, PAD_X), size.w - PAD_X);
-        p.y = Math.min(Math.max(p.y, PAD_TOP), size.h - PAD_BOTTOM);
+        const s = tgtRef.current.get(id);
+        if (!s) continue;
+        // home spring toward the seat, with a faint breathing offset at rest
+        const ph = phaseRef.current.get(id) ?? 0;
+        const ox = Math.sin(now * 0.00045 + ph) * BREATHE;
+        const oy = Math.cos(now * 0.00038 + ph * 1.7) * BREATHE;
+        p.vx += (s.x + ox - p.x) * HOME_K;
+        p.vy += (s.y + oy - p.y) * HOME_K;
+        p.vx *= DAMPING;
+        p.vy *= DAMPING;
+        p.x += p.vx;
+        p.y += p.vy;
       }
-      if (!dragRef.current) alphaRef.current *= 0.985;
-      publish(true);
+      publish();
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [size, nodes, edges, maxLevel]);
+  }, [size, nodes, edges]);
+
+  // Wheel zoom, anchored at the cursor. Native listener: React's onWheel is
+  // passive, and we need preventDefault to keep the page from scrolling.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault();
+      const cam = camRef.current;
+      const k2 = Math.min(
+        MAX_ZOOM,
+        Math.max(MIN_ZOOM, cam.k * Math.exp(-ev.deltaY * 0.0016)),
+      );
+      const wx = (ev.clientX - cam.x) / cam.k;
+      const wy = (ev.clientY - cam.y) / cam.k;
+      cam.k = k2;
+      cam.x = ev.clientX - wx * k2;
+      cam.y = ev.clientY - wy * k2;
+      camTgtRef.current = { ...cam };
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -321,29 +523,57 @@ export default function GraphBoard({
     e.preventDefault();
     const p = posRef.current.get(id);
     if (!p) return;
-    const offX = p.x - e.clientX;
-    const offY = p.y - e.clientY;
-    dragRef.current = { id, moved: 0 };
-    alphaRef.current = Math.max(alphaRef.current, 0.25);
+    const cam = camRef.current;
+    const offX = p.x - (e.clientX - cam.x) / cam.k;
+    const offY = p.y - (e.clientY - cam.y) / cam.k;
+    dragRef.current = { id, moved: 0, lvx: 0, lvy: 0 };
 
     const move = (ev: PointerEvent) => {
       const d = dragRef.current;
       if (!d) return;
       d.moved += Math.abs(ev.movementX) + Math.abs(ev.movementY);
-      p.x = ev.clientX + offX;
-      p.y = ev.clientY + offY;
+      d.lvx = ev.movementX / camRef.current.k;
+      d.lvy = ev.movementY / camRef.current.k;
+      p.x = (ev.clientX - camRef.current.x) / camRef.current.k + offX;
+      p.y = (ev.clientY - camRef.current.y) / camRef.current.k + offY;
     };
     const up = () => {
       const d = dragRef.current;
       dragRef.current = null;
-      alphaRef.current = Math.max(alphaRef.current, 0.15);
-      if (d && d.moved < 5)
+      if (d && d.moved < 5) {
         setSelectedId((prev) => (prev === id ? null : id));
+      } else if (d) {
+        // a flick carries through: the node springs home with the throw's
+        // momentum, and its neighbors ripple
+        p.vx = Math.max(-FLICK_MAX, Math.min(FLICK_MAX, d.lvx * 0.8));
+        p.vy = Math.max(-FLICK_MAX, Math.min(FLICK_MAX, d.lvy * 0.8));
+      }
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+  };
+
+  const startPan = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const cam = camRef.current;
+    const start = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
+    const move = (ev: PointerEvent) => {
+      cam.x = start.cx + (ev.clientX - start.x);
+      cam.y = start.cy + (ev.clientY - start.y);
+      camTgtRef.current = { k: cam.k, x: cam.x, y: cam.y };
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const refit = () => {
+    camTgtRef.current = fitCam(tgtRef.current, size.w, size.h);
   };
 
   const toggleTheme = () => {
@@ -458,9 +688,33 @@ export default function GraphBoard({
     hoverId && hoverId !== selectedId && !view.dragging
       ? nodes.find((n) => n.id === hoverId) ?? null
       : null;
-  const hoverPos = hovered ? view.positions.get(hovered.id) : null;
+  const hoverWorld = hovered ? view.positions.get(hovered.id) : null;
+  const hoverPos = hoverWorld
+    ? {
+        x: hoverWorld.x * view.cam.k + view.cam.x,
+        y: hoverWorld.y * view.cam.k + view.cam.y,
+      }
+    : null;
+
+  const radiusOf = (id: string) =>
+    4 + Math.min(4, (degree.get(id) ?? 1) * 0.6);
 
   const label = (title: string) => title.split(" & ")[0];
+
+  // "start here" floats over the entry column until something is understood
+  const entryCaption = useMemo(() => {
+    if (isCharting || known.size > 0) return null;
+    let x = 0;
+    let top = Infinity;
+    for (const n of nodes) {
+      if ((depth.get(n.id) ?? 0) !== 0) continue;
+      const s = seats.get(n.id);
+      if (!s) continue;
+      x = s.x;
+      top = Math.min(top, s.y);
+    }
+    return top < Infinity ? { x, y: top - 52 } : null;
+  }, [isCharting, known, nodes, depth, seats]);
 
   return (
     <div ref={containerRef} className="board">
@@ -477,7 +731,12 @@ export default function GraphBoard({
           width={size.w}
           height={size.h}
           onPointerDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedId(null);
+            if (e.target !== e.currentTarget) return;
+            setSelectedId(null);
+            startPan(e);
+          }}
+          onDoubleClick={(e) => {
+            if (e.target === e.currentTarget) refit();
           }}
         >
           <defs>
@@ -487,136 +746,202 @@ export default function GraphBoard({
             </radialGradient>
           </defs>
 
-          {edges.map((e, i) => {
-            const p = view.positions.get(e.source);
-            const t = view.positions.get(e.target);
-            if (!p || !t) return null;
-            const touchesSelected =
-              selectedId !== null &&
-              (e.source === selectedId || e.target === selectedId);
-            const base = e.type === "prerequisite" ? 0.38 : 0.14;
-            const inTrace =
-              traceSet &&
-              e.type === "prerequisite" &&
-              traceSet.has(e.source) &&
-              traceSet.has(e.target);
-            const dimmed = traceSet
-              ? !inTrace
-              : matchSet && !matchSet.has(e.source) && !matchSet.has(e.target);
-            return (
-              <line
-                key={i}
-                x1={p.x}
-                y1={p.y}
-                x2={t.x}
-                y2={t.y}
-                stroke={inTrace || touchesSelected ? "var(--ink)" : "var(--muted)"}
-                strokeWidth={e.type === "prerequisite" ? 1.2 : 1}
-                opacity={
-                  dimmed
-                    ? base * 0.2
-                    : inTrace
-                      ? 0.8
-                      : touchesSelected
-                        ? Math.min(base * 1.8, 0.75)
-                        : base
+          <g
+            transform={`translate(${view.cam.x},${view.cam.y}) scale(${view.cam.k})`}
+          >
+            <g pointerEvents="none">
+              {edges.map((e, i) => {
+                const p = view.positions.get(e.source);
+                const t = view.positions.get(e.target);
+                if (!p || !t) return null;
+                const isPre = e.type === "prerequisite";
+                const touchesSelected =
+                  selectedId !== null &&
+                  (e.source === selectedId || e.target === selectedId);
+                const inTrace =
+                  traceSet &&
+                  isPre &&
+                  traceSet.has(e.source) &&
+                  traceSet.has(e.target);
+                const dimmed = traceSet
+                  ? !inTrace
+                  : matchSet &&
+                    !matchSet.has(e.source) &&
+                    !matchSet.has(e.target);
+                const highlight = Boolean(inTrace) || touchesSelected;
+                const base = isPre ? 1 : 0.14;
+                const opacity = dimmed
+                  ? base * 0.2
+                  : inTrace
+                    ? 0.8
+                    : touchesSelected
+                      ? isPre
+                        ? 0.75
+                        : Math.min(base * 1.8, 0.75)
+                      : base;
+
+                if (!isPre) {
+                  return (
+                    <line
+                      key={i}
+                      x1={p.x}
+                      y1={p.y}
+                      x2={t.x}
+                      y2={t.y}
+                      stroke={highlight ? "var(--ink)" : "var(--muted)"}
+                      strokeWidth={1}
+                      opacity={opacity}
+                    />
+                  );
                 }
-              />
-            );
-          })}
+                const geo = prereqGeometry(
+                  p,
+                  t,
+                  radiusOf(e.source),
+                  radiusOf(e.target),
+                );
+                return (
+                  <g key={i} opacity={opacity}>
+                    <linearGradient
+                      id={`ge-${i}`}
+                      gradientUnits="userSpaceOnUse"
+                      x1={geo.start.x}
+                      y1={geo.start.y}
+                      x2={geo.end.x}
+                      y2={geo.end.y}
+                    >
+                      <stop
+                        offset="0%"
+                        style={{ stopColor: "var(--ink)" }}
+                        stopOpacity="0.1"
+                      />
+                      <stop
+                        offset="100%"
+                        style={{ stopColor: "var(--ink)" }}
+                        stopOpacity="0.62"
+                      />
+                    </linearGradient>
+                    <path
+                      d={geo.d}
+                      fill="none"
+                      stroke={highlight ? "var(--ink)" : `url(#ge-${i})`}
+                      strokeWidth={1.2}
+                    />
+                    <path
+                      d={geo.chev}
+                      fill="var(--ink)"
+                      opacity={highlight ? 0.9 : 0.55}
+                    />
+                  </g>
+                );
+              })}
+            </g>
 
-          {nodes.map((n) => {
-            const p = view.positions.get(n.id);
-            if (!p) return null;
-            const deg = degree.get(n.id) ?? 1;
-            const r = 4 + Math.min(4, deg * 0.6);
-            const isSel = n.id === selectedId;
-            const isHover = n.id === hoverId;
-            const status = statusOf(n.id);
-            const inTrace = traceSet?.has(n.id) ?? false;
-            const dimmed = traceSet
-              ? !inTrace && !isSel
-              : matchSet
-                ? !matchSet.has(n.id)
-                : false;
-
-            // brightness carries learner state: frontier brightest, then
-            // locked territory, then what's already understood (settled)
-            const groupOpacity = dimmed
-              ? 0.15
-              : status === "known"
-                ? 0.4
-                : status === "locked" && !inTrace
-                  ? 0.65
-                  : 1;
-            const fill = isSel
-              ? "var(--bright)"
-              : status === "open" || inTrace
-                ? "var(--ink)"
-                : "var(--muted)";
-            const glowScale =
-              isSel ? 2.6 : isHover ? 1.7 : status === "open" ? 1.3 : 0.6;
-
-            return (
-              <g
-                key={n.id}
-                className="knownode"
-                transform={`translate(${p.x},${p.y})`}
-                opacity={groupOpacity}
-                style={{ cursor: "grab" }}
-                onPointerDown={(e) => startDrag(n.id, e)}
-                onPointerEnter={() => setHoverId(n.id)}
-                onPointerLeave={() =>
-                  setHoverId((h) => (h === n.id ? null : h))
-                }
+            {entryCaption && (
+              <text
+                x={entryCaption.x}
+                y={entryCaption.y}
+                textAnchor="middle"
+                className="entry-caption"
+                fill="var(--muted)"
+                pointerEvents="none"
               >
-                <circle
-                  r={r * 7}
-                  fill="url(#nl-glow)"
-                  pointerEvents="none"
-                  style={{ opacity: `calc(var(--glow) * ${glowScale})` }}
-                />
-                <circle r={Math.max(r + 12, 16)} fill="transparent" />
-                <circle r={isSel ? r + 1.5 : r} fill={fill} />
-                {isSel && (
-                  <circle
-                    r={r + 10}
-                    fill="none"
-                    stroke="var(--bright)"
-                    strokeWidth="1"
-                    opacity="0.7"
-                  />
-                )}
-                {inTrace && traceIndex && (
-                  <text
-                    y={-(r + 10)}
-                    textAnchor="middle"
-                    className="node-label trace-index"
-                    pointerEvents="none"
-                    fill="var(--bright)"
-                  >
-                    {traceIndex.get(n.id)}
-                  </text>
-                )}
-                <text
-                  y={r + 22}
-                  textAnchor="middle"
-                  className="node-label"
-                  pointerEvents="none"
-                  fill={
-                    isSel
-                      ? "var(--bright)"
-                      : status === "open" || inTrace
-                        ? "var(--ink)"
-                        : "var(--muted)"
+                entry points — start here
+              </text>
+            )}
+
+            {nodes.map((n) => {
+              const p = view.positions.get(n.id);
+              if (!p) return null;
+              const r = radiusOf(n.id);
+              const isSel = n.id === selectedId;
+              const isHover = n.id === hoverId;
+              const status = statusOf(n.id);
+              const inTrace = traceSet?.has(n.id) ?? false;
+              const dimmed = traceSet
+                ? !inTrace && !isSel
+                : matchSet
+                  ? !matchSet.has(n.id)
+                  : false;
+
+              // brightness carries learner state: frontier brightest, then
+              // locked territory, then what's already understood (settled)
+              const groupOpacity = dimmed
+                ? 0.15
+                : status === "known"
+                  ? 0.4
+                  : status === "locked" && !inTrace
+                    ? 0.65
+                    : 1;
+              const fill = isSel
+                ? "var(--bright)"
+                : status === "open" || inTrace
+                  ? "var(--ink)"
+                  : "var(--muted)";
+              const glowScale =
+                isSel ? 2.6 : isHover ? 1.7 : status === "open" ? 1.3 : 0.6;
+
+              return (
+                <g
+                  key={n.id}
+                  className="knownode"
+                  transform={`translate(${p.x},${p.y})`}
+                  opacity={groupOpacity}
+                  style={{ cursor: "grab" }}
+                  onPointerDown={(e) => startDrag(n.id, e)}
+                  onPointerEnter={() => setHoverId(n.id)}
+                  onPointerLeave={() =>
+                    setHoverId((h) => (h === n.id ? null : h))
                   }
-                  fontWeight={isSel || inTrace ? 500 : 400}
                 >
-                  {label(n.title)}
-                </text>
-              </g>
-            );
-          })}
+                  <circle
+                    r={r * 7}
+                    fill="url(#nl-glow)"
+                    pointerEvents="none"
+                    style={{ opacity: `calc(var(--glow) * ${glowScale})` }}
+                  />
+                  <circle r={Math.max(r + 12, 16)} fill="transparent" />
+                  <circle r={isSel ? r + 1.5 : r} fill={fill} />
+                  {isSel && (
+                    <circle
+                      r={r + 10}
+                      fill="none"
+                      stroke="var(--bright)"
+                      strokeWidth="1"
+                      opacity="0.7"
+                    />
+                  )}
+                  {inTrace && traceIndex && (
+                    <text
+                      y={-(r + 10)}
+                      textAnchor="middle"
+                      className="node-label trace-index"
+                      pointerEvents="none"
+                      fill="var(--bright)"
+                    >
+                      {traceIndex.get(n.id)}
+                    </text>
+                  )}
+                  <text
+                    y={r + 22}
+                    textAnchor="middle"
+                    className="node-label"
+                    pointerEvents="none"
+                    fill={
+                      isSel
+                        ? "var(--bright)"
+                        : status === "open" || inTrace
+                          ? "var(--ink)"
+                          : "var(--muted)"
+                    }
+                    fontWeight={isSel || inTrace ? 500 : 400}
+                  >
+                    {label(n.title)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
         </svg>
       )}
 
@@ -674,7 +999,7 @@ export default function GraphBoard({
             ? charting === "drawing"
               ? `charting the territory · ${nodes.length} knownode${nodes.length === 1 ? "" : "s"}`
               : CHARTING_STATUS[charting]
-            : `layout: force · ${view.running ? "running" : "settled"}`}
+            : "layout: anchored"}
           {charting && <span className="cursor" aria-hidden="true" />}
         </span>
       </div>
@@ -689,6 +1014,9 @@ export default function GraphBoard({
                 ? `${matchSet.size} match${matchSet.size === 1 ? "" : "es"}`
                 : `${frontierCount} within reach`}
         </span>
+        <button className="hud-btn" onClick={refit} title="Fit graph to view">
+          fit
+        </button>
       </div>
 
       {hovered && hoverPos && (
