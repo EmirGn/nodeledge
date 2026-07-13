@@ -6,6 +6,10 @@ import { db, schema } from "@/lib/db";
 // match the public URL the browser sends, so logins fail with "invalid
 // origin" unless the deployment's own URLs are trusted explicitly. Locally
 // none of these env vars exist and the request-derived localhost origin works.
+// The canonical production domain, pinned explicitly so logins there never
+// depend on which domain Vercel happens to surface in its env vars.
+const PROD_ORIGIN = "https://nodeledge.nodeheus.com";
+
 const vercelOrigins = [
   process.env.VERCEL_PROJECT_PRODUCTION_URL,
   process.env.VERCEL_BRANCH_URL,
@@ -17,8 +21,8 @@ const vercelOrigins = [
 export const auth = betterAuth({
   baseURL:
     process.env.BETTER_AUTH_URL ??
-    (vercelOrigins.length ? vercelOrigins[0] : undefined),
-  trustedOrigins: vercelOrigins,
+    (process.env.VERCEL ? PROD_ORIGIN : undefined),
+  trustedOrigins: [PROD_ORIGIN, ...vercelOrigins],
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
